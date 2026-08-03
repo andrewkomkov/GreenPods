@@ -27,11 +27,15 @@ android {
         versionCode = versionCodeFrom(versionName!!)
     }
 
+    // A skipped CI step still exports its output as an empty string, so "set but
+    // blank" has to count as absent here or `file("")` blows up the release build.
+    val keystorePath: String? = System.getenv("GREENPODS_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+
     signingConfigs {
         create("release") {
             // Populated from environment variables in CI (see .github/workflows/release.yml).
             // Falls back to the debug key locally so `assembleRelease` always works.
-            val storePath = System.getenv("GREENPODS_KEYSTORE_PATH")
+            val storePath = keystorePath
             if (storePath != null) {
                 storeFile = file(storePath)
                 storePassword = System.getenv("GREENPODS_KEYSTORE_PASSWORD")
@@ -55,7 +59,7 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig =
-                if (System.getenv("GREENPODS_KEYSTORE_PATH") != null) {
+                if (keystorePath != null) {
                     signingConfigs.getByName("release")
                 } else {
                     signingConfigs.getByName("debug")
