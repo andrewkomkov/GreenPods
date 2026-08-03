@@ -1,70 +1,115 @@
 package io.github.andrewkomkov.greenpods
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Modifier
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import io.github.andrewkomkov.greenpods.core.designsystem.theme.GreenPodsTheme
-import io.github.andrewkomkov.greenpods.feature.pods.PodsScreen
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.stateIn
+import io.github.andrewkomkov.greenpods.service.PodMonitorService
+import io.github.andrewkomkov.greenpods.ui.GreenPodsApp
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
+    private val app get() = GreenPodsApplication.instance
+
+    /**
+     * Scanning simply produces nothing until the permission is granted, and the empty
+     * state explains that, so there is nothing to handle here beyond re-reading the
+     * environment.
+     */
     private val permissionLauncher =
-        registerForActivityResult(
-            ActivityResultContracts.RequestMultiplePermissions(),
-        ) { /* Scanning simply yields nothing until granted; no special handling needed. */ }
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            app.environmentMonitor.refresh()
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        permissionLauncher.launch(requiredPermissions())
+        app.environmentMonitor.start()
+        requestPermissions()
+        observeBackgroundMonitoring()
 
-        val pods =
-            GreenPodsApplication.instance.podRepository
-                .observePods()
-                .stateIn(lifecycleScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        // Auto-pause should work while the app is simply open, without forcing the user
+        // to accept a foreground service. The controller ignores a second caller, so
+        // this and the service can both ask for it.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) { app.earDetectionController.run() }
+        }
 
         setContent {
             GreenPodsTheme {
-                val state by pods.collectAsStateWithLifecycle()
-                Scaffold(
-                    topBar = { TopAppBar(title = { Text("GreenPods") }) },
-                ) { padding ->
-                    PodsScreen(pods = state, modifier = Modifier.padding(padding))
-                }
+                GreenPodsApp(
+                    onRequestPermission = ::requestPermissions,
+                    onOpenUrl = ::openUrl,
+                )
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Permissions can be revoked from system settings while the app is backgrounded.
+        app.environmentMonitor.refresh()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        app.environmentMonitor.stop()
+    }
+
+    /**
+     * Starts or stops the monitoring service to match the user's preference.
+     *
+     * Driven from the settings flow rather than from the switch's click handler, so the
+     * service state stays correct no matter where the setting was changed.
+     */
+    private fun observeBackgroundMonitoring() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                app.settingsRepository.settings
+                    .map { it.backgroundMonitoringEnabled }
+                    .distinctUntilChanged()
+                    .collect { enabled ->
+                        val intent = Intent(this@MainActivity, PodMonitorService::class.java)
+                        if (enabled) startForegroundService(intent) else stopService(intent)
+                    }
             }
         }
     }
 
     /**
-     * From API 31 scanning needs the dedicated Bluetooth permissions; before that
-     * it is gated behind location instead.
+     * From API 31 scanning needs the dedicated Bluetooth permissions; before that it is
+     * gated behind location instead. Notifications are asked for alongside because the
+     * monitoring service is useless without them — but the app works if they are denied.
      */
-    private fun requiredPermissions(): Array<String> =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_CONNECT,
-            )
-        } else {
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
+    private fun requestPermissions() {
+        val permissions =
+            buildList {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    add(Manifest.permission.BLUETOOTH_SCAN)
+                    add(Manifest.permission.BLUETOOTH_CONNECT)
+                } else {
+                    add(Manifest.permission.ACCESS_FINE_LOCATION)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    add(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+        permissionLauncher.launch(permissions.toTypedArray())
+    }
+
+    private fun openUrl(url: String) {
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+    }
 }

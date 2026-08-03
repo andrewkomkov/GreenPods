@@ -1,41 +1,62 @@
 package io.github.andrewkomkov.greenpods.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import io.github.andrewkomkov.greenpods.GreenPodsApplication
+import io.github.andrewkomkov.greenpods.MainActivity
 import io.github.andrewkomkov.greenpods.R
-import kotlinx.coroutines.flow.collectLatest
+import io.github.andrewkomkov.greenpods.core.data.battery.LowBatteryNotifier
+import io.github.andrewkomkov.greenpods.core.data.battery.LowBatteryWarning
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
- * Keeps scanning while the app is in the background so battery levels stay fresh
- * and ear-detection events are not missed.
+ * Keeps scanning while the app is in the background so battery levels stay fresh and
+ * ear-detection events are not missed.
  *
- * Declared as a `connectedDevice` foreground service: that is the type Android
- * expects for continuous Bluetooth work, and using the right one is what keeps the
- * service alive under Doze.
+ * Declared as a `connectedDevice` foreground service: that is the type Android expects
+ * for continuous Bluetooth work, and using the right one is what keeps the service
+ * alive under Doze.
+ *
+ * Notifications are treated as optional throughout. On Android 13+ the user can refuse
+ * them, and a battery monitor that crashes because it cannot draw a notification would
+ * be a poor trade — the scanning, the auto-pause and the low-battery bookkeeping all
+ * still work.
  */
 class PodMonitorService : LifecycleService() {
+    private val app get() = GreenPodsApplication.instance
+    private val lowBattery = LowBatteryNotifier()
+
     override fun onCreate() {
         super.onCreate()
-        createChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("Scanning…"))
+        createChannels()
+        startForeground(ONGOING_NOTIFICATION_ID, buildOngoingNotification("Scanning…"))
+
+        lifecycleScope.launch { app.earDetectionController.run() }
 
         lifecycleScope.launch {
-            GreenPodsApplication.instance.podRepository.observePrimaryPod().collectLatest { pod ->
-                val level = pod?.battery?.lowestBudPercent
-                updateNotification(
+            combine(app.podRepository.pods, app.settingsRepository.settings) { pods, settings ->
+                pods to settings
+            }.collect { (pods, settings) ->
+                val nearest = pods.firstOrNull()
+                updateOngoingNotification(
                     when {
-                        pod == null -> "No AirPods nearby"
-                        level == null -> pod.name
-                        else -> "${pod.name} · $level%"
+                        nearest == null -> "No AirPods nearby"
+                        nearest.battery.lowestBudPercent == null -> nearest.name
+                        else -> "${nearest.name} · ${nearest.battery.lowestBudPercent}%"
                     },
                 )
+                pods.forEach { pod ->
+                    lowBattery.evaluate(pod, settings).forEach(::warn)
+                }
             }
         }
     }
@@ -49,33 +70,77 @@ class PodMonitorService : LifecycleService() {
         return START_STICKY
     }
 
-    private fun createChannel() {
+    private fun createChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val channel =
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
             NotificationChannel(
-                CHANNEL_ID,
+                ONGOING_CHANNEL_ID,
                 getString(R.string.monitor_channel_name),
                 NotificationManager.IMPORTANCE_LOW,
-            )
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            ),
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(
+                ALERT_CHANNEL_ID,
+                getString(R.string.low_battery_channel_name),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ),
+        )
     }
 
-    private fun buildNotification(text: String): Notification =
+    private fun contentIntent(): PendingIntent =
+        PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+
+    private fun buildOngoingNotification(text: String): Notification =
         Notification
-            .Builder(this, CHANNEL_ID)
+            .Builder(this, ONGOING_CHANNEL_ID)
             .setContentTitle(getString(R.string.monitor_notification_title))
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_headset)
+            .setContentIntent(contentIntent())
             .setOngoing(true)
             .build()
 
-    private fun updateNotification(text: String) {
+    private fun updateOngoingNotification(text: String) {
+        if (!canPostNotifications()) return
         getSystemService(NotificationManager::class.java)
-            .notify(NOTIFICATION_ID, buildNotification(text))
+            .notify(ONGOING_NOTIFICATION_ID, buildOngoingNotification(text))
     }
 
+    private fun warn(warning: LowBatteryWarning) {
+        if (!canPostNotifications()) return
+        val notification =
+            Notification
+                .Builder(this, ALERT_CHANNEL_ID)
+                .setContentTitle(
+                    getString(
+                        R.string.low_battery_title,
+                        warning.component.displayName,
+                        warning.deviceName,
+                    ),
+                ).setContentText(getString(R.string.low_battery_text, warning.levelPercent))
+                .setSmallIcon(android.R.drawable.stat_sys_warning)
+                .setContentIntent(contentIntent())
+                .setAutoCancel(true)
+                .build()
+
+        getSystemService(NotificationManager::class.java)
+            .notify(warning.address.hashCode() + warning.component.ordinal, notification)
+    }
+
+    private fun canPostNotifications(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
     private companion object {
-        const val CHANNEL_ID = "pod_monitor"
-        const val NOTIFICATION_ID = 1
+        const val ONGOING_CHANNEL_ID = "pod_monitor"
+        const val ALERT_CHANNEL_ID = "pod_low_battery"
+        const val ONGOING_NOTIFICATION_ID = 1
     }
 }

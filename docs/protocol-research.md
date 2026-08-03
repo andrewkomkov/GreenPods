@@ -92,6 +92,36 @@ join, and are explicitly out of scope:
 - "Hey Siri" voice trigger (the trigger byte can be set; the assistant cannot be invoked)
 - Audio sharing between two sets of AirPods
 
+## Field notes
+
+Things learned by running GreenPods on real hardware, as opposed to from captures.
+
+### Samsung Galaxy S20 FE (SM-G780F), Android 13 / API 33 — 2026-08-03
+
+- **One scan registration per app, enforced.** A second `BluetoothLeScanner.startScan`
+  from the same process fails with `SCAN_FAILED_APPLICATION_REGISTRATION_FAILED`
+  (code 2) rather than being merged with the first. GreenPods has three independent
+  consumers of the sighting stream — the device list, the ear-detection controller and
+  the monitoring service — so `PodRepository.pods` is shared rather than cold. A cold
+  flow silently leaves two of the three consumers with no data at all, which looks
+  exactly like "AirPods not detected".
+  With the shared flow, a clean start registers exactly one scanner and survives
+  backgrounding and returning. The one case that still trips code 2 is installing a
+  new build *over the running process* — the outgoing process has not released its
+  registration yet. It clears on the next subscription, so the app recovers by itself
+  when the screen is left and re-entered.
+- **The advertisement filter is accepted as written.** Company id `0x004C`, first
+  payload byte `0x07`, mask `0xFF` registers and matches; the stack reports it as
+  `BluetoothLeScanFilter[ ManufacturerId=4c ManufacturerData=07 ManufacturerDataMask=FF ]`.
+  No need to filter in the app.
+- **`neverForLocation` works.** Scanning proceeds on API 33 with `BLUETOOTH_SCAN` only —
+  no location permission requested and none needed.
+- **AAP not exercised.** No AirPods were paired to this device, so the L2CAP path could
+  not be reached at all. That is itself a case worth handling: the gate reports "these
+  AirPods are not paired with this phone" rather than blaming the Bluetooth stack for a
+  refusal that never happened. Whether this stack would refuse PSM `0x1001` with buds
+  present remains **unverified**.
+
 ## Sources
 
 - LibrePods protocol notes — `docs/AAP Definitions.md`, `opcodes.md`,

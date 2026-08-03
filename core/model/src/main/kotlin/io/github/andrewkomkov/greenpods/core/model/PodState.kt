@@ -18,6 +18,22 @@ data class BatteryComponent(
     }
 }
 
+/** Which physical part of the accessory a battery reading belongs to. */
+enum class PodComponent {
+    LEFT,
+    RIGHT,
+    CASE,
+    ;
+
+    val displayName: String
+        get() =
+            when (this) {
+                LEFT -> "Left"
+                RIGHT -> "Right"
+                CASE -> "Case"
+            }
+}
+
 data class BatteryState(
     val left: BatteryComponent = BatteryComponent.Unknown,
     val right: BatteryComponent = BatteryComponent.Unknown,
@@ -26,6 +42,13 @@ data class BatteryState(
     /** Lowest known bud level — what a status bar or widget should surface. */
     val lowestBudPercent: Int?
         get() = listOfNotNull(left.levelPercent, right.levelPercent).minOrNull()
+
+    operator fun get(component: PodComponent): BatteryComponent =
+        when (component) {
+            PodComponent.LEFT -> left
+            PodComponent.RIGHT -> right
+            PodComponent.CASE -> case
+        }
 }
 
 /** Where a single bud currently is. */
@@ -119,6 +142,12 @@ data class PodState(
      * and passive advertisement decoding continues regardless.
      */
     val activeTransports: Set<Transport> = setOf(Transport.BLE_ADVERTISEMENT),
+    /**
+     * Why each transport is or is not live. Purely explanatory: [activeTransports]
+     * stays the authority for what is usable, so a missing status can never
+     * accidentally unlock a feature.
+     */
+    val transportStatuses: List<TransportStatus> = listOf(TransportStatus.AdvertisementAvailable),
     val lastSeenEpochMillis: Long = 0L,
 ) {
     /**
@@ -126,9 +155,29 @@ data class PodState(
      * them and a live transport must be able to carry them.
      */
     val usableFeatures: Set<PodFeature>
-        get() = model.features.filterTo(mutableSetOf()) { it.requiredTransport in activeTransports }
+        get() =
+            model.features.filterTo(mutableSetOf()) { feature ->
+                feature.isImplemented && feature.requiredTransport in activeTransports
+            }
 
     /** Features the hardware has but no live transport can reach. */
     val gatedFeatures: Set<PodFeature>
         get() = model.features - usableFeatures
+
+    fun statusOf(transport: Transport): TransportStatus =
+        transportStatuses.firstOrNull { it.transport == transport }
+            ?: TransportStatus.notProbed(transport)
+
+    /**
+     * The sentence to show next to a locked feature. Falls back to the transport's own
+     * description when nothing more specific was recorded, so a lock is never mute.
+     */
+    fun reasonFor(feature: PodFeature): String {
+        // An unimplemented feature is locked by GreenPods itself, not by the phone, and
+        // saying "your Bluetooth stack refuses it" would be a lie.
+        if (!feature.isImplemented) return feature.explanation
+
+        val status = statusOf(feature.requiredTransport)
+        return status.reason.ifBlank { "Needs the ${feature.requiredTransport.displayName} transport." }
+    }
 }

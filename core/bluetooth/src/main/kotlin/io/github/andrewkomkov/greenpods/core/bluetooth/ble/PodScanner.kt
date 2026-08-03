@@ -9,8 +9,8 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.ParcelUuid
 import android.util.Log
-import io.github.andrewkomkov.greenpods.core.model.PodModel
 import io.github.andrewkomkov.greenpods.core.model.PodState
+import io.github.andrewkomkov.greenpods.core.model.ScanMode
 import io.github.andrewkomkov.greenpods.core.model.Transport
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -36,6 +36,17 @@ data class PodSighting(
 }
 
 /**
+ * Where accessory sightings come from.
+ *
+ * The repository depends on this rather than on [PodScanner] so the whole
+ * accumulate-age-rank pipeline can be driven from captured advertisements in a unit
+ * test, with no Bluetooth adapter in sight.
+ */
+fun interface PodSightingSource {
+    fun sightings(scanMode: ScanMode): Flow<PodSighting>
+}
+
+/**
  * Passive BLE scanner for Apple proximity-pairing advertisements.
  *
  * This is GreenPods' baseline transport: it needs no pairing, no connection and no
@@ -44,7 +55,7 @@ data class PodSighting(
  */
 class PodScanner(
     private val context: Context,
-) {
+) : PodSightingSource {
     private val bluetoothManager: BluetoothManager?
         get() = context.getSystemService(BluetoothManager::class.java)
 
@@ -57,7 +68,7 @@ class PodScanner(
      * it ever reaches the process.
      */
     @SuppressLint("MissingPermission")
-    fun sightings(scanMode: Int = ScanSettings.SCAN_MODE_BALANCED): Flow<PodSighting> =
+    override fun sightings(scanMode: ScanMode): Flow<PodSighting> =
         callbackFlow {
             val scanner = bluetoothManager?.adapter?.bluetoothLeScanner
             if (scanner == null) {
@@ -79,7 +90,7 @@ class PodScanner(
             val settings =
                 ScanSettings
                     .Builder()
-                    .setScanMode(scanMode)
+                    .setScanMode(scanMode.toAndroidScanMode())
                     .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
                     .setMatchMode(ScanSettings.MATCH_MODE_STICKY)
                     .build()
@@ -94,8 +105,10 @@ class PodScanner(
                             result.scanRecord
                                 ?.getManufacturerSpecificData(AppleBeaconDecoder.APPLE_COMPANY_ID)
                                 ?: return
+                        // Unknown model ids are forwarded rather than dropped: the
+                        // repository logs them so the registry can grow, and decides
+                        // what to show. Filtering here would lose that information.
                         val beacon = AppleBeaconDecoder.decode(payload) ?: return
-                        if (beacon.model == PodModel.UNKNOWN) return
 
                         trySend(
                             PodSighting(
@@ -124,3 +137,16 @@ class PodScanner(
         val HEART_RATE_SERVICE: ParcelUuid = ParcelUuid.fromString("0000180d-0000-1000-8000-00805f9b34fb")
     }
 }
+
+/**
+ * Maps the app's scan preference onto the platform constant.
+ *
+ * Kept as an extension rather than a field on [ScanMode] so `core/model` stays free of
+ * Android types.
+ */
+internal fun ScanMode.toAndroidScanMode(): Int =
+    when (this) {
+        ScanMode.LOW_POWER -> ScanSettings.SCAN_MODE_LOW_POWER
+        ScanMode.BALANCED -> ScanSettings.SCAN_MODE_BALANCED
+        ScanMode.LOW_LATENCY -> ScanSettings.SCAN_MODE_LOW_LATENCY
+    }

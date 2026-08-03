@@ -28,6 +28,16 @@ data class ReleaseInfo(
 )
 
 /**
+ * Where update information comes from.
+ *
+ * An interface so screens can be tested against each outcome — current, newer, failed —
+ * without a network or a mock web server standing in for one.
+ */
+fun interface UpdateSource {
+    suspend fun check(): UpdateStatus
+}
+
+/**
  * In-app update check against GitHub Releases.
  *
  * GreenPods is distributed as an APK from GitHub rather than through Play, so it
@@ -42,8 +52,8 @@ class UpdateChecker(
     private val currentVersionName: String,
     private val client: OkHttpClient = OkHttpClient(),
     private val releasesUrl: String = DEFAULT_RELEASES_URL,
-) {
-    suspend fun check(): UpdateStatus =
+) : UpdateSource {
+    override suspend fun check(): UpdateStatus =
         withContext(Dispatchers.IO) {
             try {
                 val request =

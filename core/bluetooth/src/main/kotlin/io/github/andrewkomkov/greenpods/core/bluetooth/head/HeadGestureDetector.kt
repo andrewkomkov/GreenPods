@@ -55,7 +55,16 @@ class HeadGestureDetector(
     private val yawHistory = ArrayDeque<Reading>()
     private var tiltStartMillis: Long? = null
     private var tiltDirection: HeadGesture? = null
-    private var lastEventMillis = 0L
+
+    /**
+     * Null until the first gesture fires.
+     *
+     * Storing zero here would put the detector inside its own refractory period at
+     * startup, silently swallowing anything the user did in the first second — and
+     * "the first gesture after opening the app never works" is exactly the kind of
+     * fault that gets blamed on the hardware.
+     */
+    private var lastEventMillis: Long? = null
 
     private data class Reading(
         val value: Float,
@@ -72,7 +81,7 @@ class HeadGestureDetector(
         pitchHistory += Reading(pose.pitchDegrees, atMillis)
         yawHistory += Reading(pose.yawDegrees, atMillis)
 
-        if (atMillis - lastEventMillis < config.cooldownMillis) return null
+        lastEventMillis?.let { last -> if (atMillis - last < config.cooldownMillis) return null }
 
         detectTilt(pose, atMillis)?.let { return emit(it, atMillis) }
         detectOscillation(pitchHistory, config.nodThresholdDegrees, minReversals = 1)?.let { amplitude ->

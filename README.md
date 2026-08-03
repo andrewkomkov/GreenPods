@@ -8,9 +8,11 @@ Kotlin, Jetpack Compose, Material 3 Expressive.
 
 [![CI](https://github.com/andrewkomkov/GreenPods/actions/workflows/ci.yml/badge.svg)](https://github.com/andrewkomkov/GreenPods/actions/workflows/ci.yml)
 
-> **Status: early.** The protocol layer is implemented and unit-tested against real
-> packet captures; the UI is a working skeleton. Feature work runs through
-> [spec-kit](https://github.com/github/spec-kit).
+> **Status: working.** The protocol layer is unit-tested against real packet captures,
+> and the app — device list, transport diagnostics, gated controls, ear-detection
+> auto-pause, background monitoring, updates — runs and is verified on device. Feature
+> work runs through [spec-kit](https://github.com/github/spec-kit); the current spec is
+> [`specs/001-greenpods-core-app`](specs/001-greenpods-core-app/spec.md).
 
 ## What actually works, and what doesn't
 
@@ -21,7 +23,9 @@ all of them. GreenPods is built around that reality rather than pretending other
 |---|---|---|
 | Battery (per bud + case), charging | BLE advertisement | ✅ Always |
 | In-ear / in-case detection | BLE advertisement | ✅ Always |
+| **Auto-pause / resume on bud removal** | BLE advertisement + media keys | ✅ Always |
 | Case lid-open events | BLE advertisement | ✅ Always |
+| Low-battery warnings, background monitoring | BLE advertisement | ✅ Always |
 | Heart rate — **Powerbeats Pro 2** | Standard BLE Heart Rate Profile | ✅ Always |
 | Noise control (ANC / Transparency / Adaptive) | AAP over L2CAP | ⚠️ Stack-dependent |
 | Conversational Awareness, adaptive audio | AAP over L2CAP | ⚠️ Stack-dependent |
@@ -36,7 +40,12 @@ is refused by real AirPods on most devices. GreenPods probes for it at runtime a
 unlocks those features where it works. Everything in the "always" rows is unaffected.
 
 The app shows locked features rather than hiding them, so you can tell the
-difference between "your phone won't allow this" and "the app doesn't do it".
+difference between "your phone won't allow this" and "the app doesn't do it". Tap a
+locked chip and it tells you exactly which check failed.
+
+Auto-pause is worth calling out: it is the AirPods behaviour people miss most on
+Android, and it is one of the "always" rows — wear state travels in the advertisement,
+so it works on a phone that can never open the Apple protocol channel.
 
 ### A useful workaround
 

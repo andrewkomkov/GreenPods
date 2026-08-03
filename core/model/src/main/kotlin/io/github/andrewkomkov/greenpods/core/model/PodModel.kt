@@ -137,6 +137,90 @@ enum class PodFeature {
                 HEART_RATE_GATT -> Transport.GATT
                 else -> Transport.AAP_L2CAP
             }
+
+    /**
+     * Whether GreenPods can actually *do* this feature once its transport is live.
+     *
+     * A transport being open is necessary but not sufficient: the heart-rate sensor on
+     * AirPods Pro 3 can be switched on over the Apple protocol, but its measurement
+     * frame has never been publicly decoded, so there is no number to show. Reporting
+     * that as usable would be a promise the app cannot keep — see
+     * `docs/protocol-research.md`.
+     */
+    val isImplemented: Boolean
+        get() = this != HEART_RATE_AAP
+
+    /** Human label. Enum names must never reach the screen. */
+    val displayName: String
+        get() =
+            when (this) {
+                EAR_DETECTION -> "Ear detection"
+                NOISE_CONTROL -> "Noise control"
+                ADAPTIVE_AUDIO -> "Adaptive audio"
+                CONVERSATIONAL_AWARENESS -> "Conversational awareness"
+                SPATIAL_AUDIO -> "Spatial audio"
+                HEAD_TRACKING -> "Head tracking"
+                EAR_TIP_FIT_TEST -> "Ear tip fit test"
+                CASE_SPEAKER -> "Case speaker"
+                VOLUME_SWIPE -> "Volume swipe"
+                HEARING_AID -> "Hearing aid"
+                HEART_RATE_AAP -> "Heart rate (Apple protocol)"
+                HEART_RATE_GATT -> "Heart rate"
+            }
+
+    /** One line on what the feature is, shown under a locked chip. */
+    val explanation: String
+        get() =
+            when (this) {
+                EAR_DETECTION -> {
+                    "Knows when a bud is in your ear, in the case, or out."
+                }
+
+                NOISE_CONTROL -> {
+                    "Switch between off, noise cancellation and transparency."
+                }
+
+                ADAPTIVE_AUDIO -> {
+                    "Blends cancellation and transparency by surroundings."
+                }
+
+                CONVERSATIONAL_AWARENESS -> {
+                    "Lowers the volume when you start speaking."
+                }
+
+                SPATIAL_AUDIO -> {
+                    "Fixed-in-space audio rendering, set by the source device."
+                }
+
+                HEAD_TRACKING -> {
+                    "Streams head orientation, which head gestures are built on."
+                }
+
+                EAR_TIP_FIT_TEST -> {
+                    "Checks the seal of the silicone tips."
+                }
+
+                CASE_SPEAKER -> {
+                    "Plays a locating tone from the case."
+                }
+
+                VOLUME_SWIPE -> {
+                    "Volume by sliding a finger along the stem."
+                }
+
+                HEARING_AID -> {
+                    "Clinical-grade hearing assistance profile."
+                }
+
+                HEART_RATE_AAP -> {
+                    "The sensor can be switched on over Apple's protocol, but the " +
+                        "measurement frame is not publicly decoded — so no number is shown."
+                }
+
+                HEART_RATE_GATT -> {
+                    "Standard Bluetooth heart-rate profile — works without root."
+                }
+            }
 }
 
 /**
@@ -165,4 +249,13 @@ enum class Transport {
      * Availability is probed at runtime and never assumed.
      */
     AAP_L2CAP,
+    ;
+
+    val displayName: String
+        get() =
+            when (this) {
+                BLE_ADVERTISEMENT -> "Bluetooth advertisement"
+                GATT -> "Bluetooth GATT"
+                AAP_L2CAP -> "Apple protocol (L2CAP)"
+            }
 }

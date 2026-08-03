@@ -1,50 +1,89 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# GreenPods Constitution
+
+GreenPods brings AirPods features to non-Apple Android devices without root. Every
+rule below exists because this project sits on top of a reverse-engineered protocol
+that Apple never documented and that Android's Bluetooth stack partly refuses to
+carry. The constitution is what keeps that situation honest instead of magical.
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. The transport gate is the law
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+Three independent transports exist — `BLE_ADVERTISEMENT` (always available, read-only),
+`GATT` (always available, heart rate on Powerbeats Pro 2 only), and `AAP_L2CAP` (usually
+unavailable on unrooted devices, the only one that can write).
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+No feature may assume a transport. Availability is probed, cached with its reason, and
+exposed as data. `PodState.usableFeatures` and `PodState.gatedFeatures` are the single
+source of truth for what the UI may offer; `PodModel.features` alone never is.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+Failure to open the AAP channel is a **normal outcome**. It is reported as a gate, never
+as a crash, an error toast, or a retry storm.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### II. Locked, not hidden
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+A feature the hardware has but this phone cannot reach is shown in a locked state with
+the reason attached. A missing control reads as a bug; a locked control explains the
+platform. Users must be able to tell "my phone can't" apart from "the app is broken".
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### III. Protocol code is pure and pinned to captures (NON-NEGOTIABLE)
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+Codecs, decoders, mappers and detectors do no I/O and take no Android dependency they
+do not need. They are unit-tested off-device against byte sequences captured from real
+hardware.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+A decoder that disagrees with a fixture is wrong. Fixtures are only changed by
+re-capturing from a device, and the source of the new capture is recorded in
+`docs/protocol-research.md`.
+
+### IV. Unknown traffic is surfaced, never dropped
+
+Every packet that cannot be interpreted becomes `AapEvent.UnhandledControl` or
+`AapEvent.Unknown` and is visible in diagnostics. That log is how new protocol
+behaviour gets discovered; silently discarding it forecloses the project's own future.
+
+### V. No fiction
+
+Nothing is invented to fill a protocol gap. If a frame layout is not decoded — such as
+the AAP heart-rate measurement — the feature is absent and documented as absent, not
+approximated. Values that *are* approximations (`HeadPoseMapper.SCALE`) say so in the
+code that carries them.
+
+### VI. Unrooted, permissionless-by-default
+
+The baseline experience requires no pairing, no root, no Magisk module, no Xposed hook,
+and no location permission on API 31+. Anything beyond that baseline degrades to the
+baseline instead of blocking the app.
+
+## Technical Constraints
+
+- Kotlin, Compose, Material 3 Expressive. `minSdk` 26, `compileSdk`/`targetSdk` from
+  `build-logic/GreenPodsConfig.kt`. L2CAP is gated at runtime (API 29), not compile time.
+- Dependency direction is one-way: `app` → `feature/*` → `core/data` → `core/bluetooth`
+  → `core/model`. Features never depend on each other.
+- `core/model` stays free of Android and of I/O.
+- Motion uses `GreenPodsMotion` tokens, not raw `tween`/`spring` literals, until
+  material3 1.5.0 makes `MotionScheme` public.
+- No annotation processors. Dependencies are wired by hand in `GreenPodsApplication`.
+
+## Quality Gates
+
+- `./gradlew spotlessCheck lintDebug testDebugUnitTest` must pass before any commit.
+- Every pure component — decoder, mapper, detector, policy, repository, view model —
+  carries unit tests. Android-framework-touching classes are kept thin enough that the
+  logic under them is testable without a device.
+- Behaviour that depends on a transport is tested in both states: transport live and
+  transport gated.
+- Conventional Commits drive release-please; version numbers are never edited by hand.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution supersedes convenience. Feature work starts with `/speckit-specify`,
+not with editing code — most of this project's hard problems are "what is actually
+possible over this transport", which is spec territory.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+Amendments require updating this file and any spec it invalidates in the same change.
+What is learned about the protocol is written to `docs/protocol-research.md`; that file
+is the project's memory and is updated in the same commit as the code that learned it.
+
+**Version**: 1.0.0 | **Ratified**: 2026-08-03 | **Last Amended**: 2026-08-03
