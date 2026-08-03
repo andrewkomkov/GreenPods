@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.os.Build
 import android.util.Log
+import androidx.annotation.RequiresApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -95,6 +96,10 @@ class AapTransport(
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice): Flow<ByteArray> =
         callbackFlow {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                close(UnsupportedOperationException("L2CAP sockets require API 29"))
+                return@callbackFlow
+            }
             val bluetoothSocket = openSocket(device)
             socket = bluetoothSocket
             bluetoothSocket.connect()
@@ -149,6 +154,7 @@ class AapTransport(
      * LibrePods takes, and it is what the Magisk stack patch makes actually work.
      */
     @SuppressLint("MissingPermission")
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun openSocket(device: BluetoothDevice): BluetoothSocket =
         try {
             device.createInsecureL2capChannel(AapProtocol.PSM)

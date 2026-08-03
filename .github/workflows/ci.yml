@@ -53,6 +53,7 @@ jobs:
         with:
           name: test-results
           path: '**/build/reports/tests/**'
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Upload lint results
@@ -60,7 +61,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lint-results
-          path: '**/build/reports/lint-results-*.html'
+          path: '**/build/reports/lint-results-*'
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Upload debug APK

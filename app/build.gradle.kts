@@ -65,7 +65,12 @@ android {
 }
 
 dependencies {
+    // The BOM has to be applied to every configuration that resolves Compose
+    // artifacts, not just `implementation` — the test artifacts carry no version
+    // of their own and fail to resolve without it.
     implementation(platform(libs.compose.bom))
+    androidTestImplementation(platform(libs.compose.bom))
+    debugImplementation(platform(libs.compose.bom))
 
     implementation(projects.core.model)
     implementation(projects.core.data)
