@@ -1,0 +1,24 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{kt,kts}]
+max_line_length = 120
+ktlint_code_style = ktlint_official
+# @Composable functions are PascalCase by Compose convention; ktlint's default
+# function-naming rule would flag every one of them.
+ktlint_function_naming_ignore_when_annotated_with = Composable
+# Compose previews and screens legitimately exceed the default parameter count.
+ktlint_standard_function-signature = disabled
+
+[*.{yml,yaml,json}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false

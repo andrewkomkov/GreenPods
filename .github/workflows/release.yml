@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  # Maintains a rolling "chore: release X.Y.Z" PR from the conventional commits on
+  # main. Merging that PR is what actually tags a release and fires the build below.
+  release-please:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish-apk:
+    name: Build & attach APK
+    needs: release-please
+    if: needs.release-please.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      # The release build is signed only when a keystore secret is configured.
+      # Without it the build still succeeds using the debug key, so a fork can cut
+      # releases without holding the signing material.
+      - name: Decode keystore
+        id: keystore
+        if: env.KEYSTORE_BASE64 != ''
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          echo "path=$RUNNER_TEMP/release.jks" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        env:
+          GREENPODS_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          GREENPODS_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          GREENPODS_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          GREENPODS_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Rename APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/*.apk \
+             "dist/greenpods-${{ needs.release-please.outputs.version }}.apk"
+
+      # The in-app updater looks for the first .apk asset on the latest release,
+      # so attaching it here is what makes auto-update work.
+      - name: Attach APK to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ needs.release-please.outputs.tag }}" dist/*.apk --clobber

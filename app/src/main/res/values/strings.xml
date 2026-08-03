@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GreenPods</string>
+    <string name="monitor_channel_name">Pod monitoring</string>
+    <string name="monitor_notification_title">Watching your AirPods</string>
+</resources>
