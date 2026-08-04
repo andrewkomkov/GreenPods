@@ -84,3 +84,25 @@ parallel. Each task names the requirement it satisfies so the gate stays traceab
   capture screenshots, confirm no crash in logcat, run connected UI tests. — SC-001
 - [x] **T031** Update `docs/protocol-research.md` and `README.md` with what the device
   run established about this stack. — Constitution VII (project memory)
+
+## Phase 7 — Verified against real hardware (Pixel 8, Android 17, AirPods Pro 3)
+
+- [x] **T032** `BondedPodResolver`: correlate a rotating advertisement address with the
+  paired classic address. Without it the AAP probe could never succeed on any phone.
+  — FR-007
+- [x] **T033** `ProbeOutcome`: keep "could not try" distinct from "tried and refused",
+  and report ambiguity rather than guessing between paired accessories. — FR-007, FR-010
+- [x] **T034** `AapAvailability.ChannelNotEstablished`: name what a stock stack actually
+  does, and report which socket API got that far. — FR-010
+- [x] **T035** Auto-pause ownership survives a lagging `AudioManager.isMusicActive`,
+  so auto-resume stops silently failing. — FR-016, FR-017
+- [x] **T036** Case battery explains its own absence instead of showing a bare dash.
+  — FR-003
+- [x] **T037** adb command surface (`dump`, `probe`, `set`, `inject`, `monitor`,
+  `clear`), debug-only, documented in `docs/adb.md`. — Constitution VI
+- [x] **T038** `SyntheticBeacon` + `StateDump`, unit-tested, so injection and inspection
+  are themselves trustworthy. — Constitution VI
+- [x] **T039** Pin espresso 3.7.0: the version Compose pulls transitively reflects on
+  `InputManager.getInstance`, removed in Android 17, and fails every UI test on API 37.
+- [x] **T040** Field notes for both devices in `docs/protocol-research.md`, including
+  the heart-rate workout gate. — Constitution V

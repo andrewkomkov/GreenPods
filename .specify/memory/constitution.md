@@ -49,7 +49,32 @@ the AAP heart-rate measurement — the feature is absent and documented as absen
 approximated. Values that *are* approximations (`HeadPoseMapper.SCALE`) say so in the
 code that carries them.
 
-### VI. Unrooted, permissionless-by-default
+### VI. Driveable and observable over adb (NON-NEGOTIABLE)
+
+Every feature must be exercisable, and every piece of state inspectable, from `adb`
+alone — without touching the screen, and without hardware that may not be present.
+
+This is not a debugging convenience, it is what makes the project verifiable at all.
+The accessories are expensive, the interesting states are physical (a bud leaving an
+ear, a case closing, a battery crossing a threshold), and the transport that matters
+most is unavailable on nearly every phone. Tapping at coordinates in a screenshot is
+not verification; it is guessing.
+
+Concretely:
+
+- A debug-build broadcast receiver exposes a stable command surface: dump the whole
+  state, change any setting, force a transport probe, start or stop monitoring, and
+  **inject a synthetic advertisement** so wear transitions and battery thresholds can
+  be driven without the hardware.
+- The dump is machine-readable, complete, and includes *why* each transport is or is
+  not live — the same reasons the UI shows.
+- The surface exists only in debug builds. Release builds ship no such entry point.
+- `docs/adb.md` documents every command with a runnable example, and is updated in the
+  same change as the command.
+
+A feature that cannot be driven from adb is not finished.
+
+### VII. Unrooted, permissionless-by-default
 
 The baseline experience requires no pairing, no root, no Magisk module, no Xposed hook,
 and no location permission on API 31+. Anything beyond that baseline degrades to the
@@ -69,6 +94,8 @@ baseline instead of blocking the app.
 ## Quality Gates
 
 - `./gradlew spotlessCheck lintDebug testDebugUnitTest` must pass before any commit.
+- Every user-visible behaviour has an adb path that exercises it, and that path is the
+  one used to verify it on a device. Screenshots corroborate; they do not verify.
 - Every pure component — decoder, mapper, detector, policy, repository, view model —
   carries unit tests. Android-framework-touching classes are kept thin enough that the
   logic under them is testable without a device.

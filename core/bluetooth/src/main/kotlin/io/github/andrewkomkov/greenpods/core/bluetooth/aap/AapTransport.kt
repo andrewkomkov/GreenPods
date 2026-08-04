@@ -35,6 +35,18 @@ sealed interface AapAvailability {
     /** The socket opened but the buds refused the negotiated channel mode. */
     data object ChannelModeRefused : AapAvailability
 
+    /**
+     * The socket was created and the connect call was accepted, but no channel ever
+     * came up — the first read returns -1 immediately.
+     *
+     * This is what an unpatched stack does when everything else is right: the buds are
+     * paired, connected and playing audio, and the L2CAP channel still never forms.
+     * [route] records which socket API got that far, which is the part worth reporting.
+     */
+    data class ChannelNotEstablished(
+        val route: String,
+    ) : AapAvailability
+
     /** Bluetooth is off, or CONNECT permission has not been granted. */
     data object NotPermitted : AapAvailability
 
@@ -61,6 +73,18 @@ class AapTransport(
     private var socket: BluetoothSocket? = null
 
     /**
+     * Which socket API actually produced the channel on the last attempt.
+     *
+     * Reported in failures because it is the single most useful fact when someone
+     * sends in a diagnostic: whether this Android version still rejects PSM 0x1001
+     * outright, or accepts the call and fails later, tells you which of two completely
+     * different problems you are looking at.
+     */
+    @Volatile
+    var lastSocketRoute: String = "not attempted"
+        private set
+
+    /**
      * Attempts to open a channel and immediately closes it, reporting why it did
      * or did not work. Cheap enough to run when a device is first seen.
      */
@@ -77,12 +101,24 @@ class AapTransport(
                 AapAvailability.PsmRejected
             } catch (e: IOException) {
                 val message = e.message.orEmpty()
-                if (message.contains("channel type", ignoreCase = true) ||
-                    message.contains("not support", ignoreCase = true)
-                ) {
-                    AapAvailability.ChannelModeRefused
-                } else {
-                    AapAvailability.Failed(message.ifBlank { "L2CAP connect failed" })
+                when {
+                    message.contains("channel type", ignoreCase = true) ||
+                        message.contains("not support", ignoreCase = true) -> {
+                        AapAvailability.ChannelModeRefused
+                    }
+
+                    // What a stock stack actually produces: the socket opens, the
+                    // accessory never completes the channel, and the first read returns
+                    // -1. Observed on Pixel 8 / Android 17 with AirPods Pro 3 paired and
+                    // connected — see docs/protocol-research.md.
+                    message.contains("read failed", ignoreCase = true) ||
+                        message.contains("socket might closed", ignoreCase = true) -> {
+                        AapAvailability.ChannelNotEstablished(lastSocketRoute)
+                    }
+
+                    else -> {
+                        AapAvailability.Failed("${message.ifBlank { "L2CAP connect failed" }} [$lastSocketRoute]")
+                    }
                 }
             } catch (e: ReflectiveOperationException) {
                 AapAvailability.Failed("Hidden L2CAP API unavailable: ${e.message}")
@@ -157,9 +193,11 @@ class AapTransport(
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun openSocket(device: BluetoothDevice): BluetoothSocket =
         try {
-            device.createInsecureL2capChannel(AapProtocol.PSM)
+            device.createInsecureL2capChannel(AapProtocol.PSM).also {
+                lastSocketRoute = "public createInsecureL2capChannel"
+            }
         } catch (e: IllegalArgumentException) {
-            hiddenL2capSocket(device)
+            hiddenL2capSocket(device).also { lastSocketRoute = "hidden createInsecureL2capSocket" }
         }
 
     private fun hiddenL2capSocket(device: BluetoothDevice): BluetoothSocket =

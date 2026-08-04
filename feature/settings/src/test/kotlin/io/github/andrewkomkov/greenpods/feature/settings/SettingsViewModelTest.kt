@@ -8,6 +8,7 @@ import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.settings.SettingsRepository
 import io.github.andrewkomkov.greenpods.core.data.transport.AapProbe
+import io.github.andrewkomkov.greenpods.core.data.transport.ProbeOutcome
 import io.github.andrewkomkov.greenpods.core.data.transport.TransportGate
 import io.github.andrewkomkov.greenpods.core.data.update.ReleaseInfo
 import io.github.andrewkomkov.greenpods.core.data.update.UpdateSource
@@ -61,7 +62,7 @@ class SettingsViewModelTest {
         val pods =
             PodRepository(
                 source = PodSightingSource { _: ScanMode -> emptyFlow() },
-                gate = TransportGate(diagnostics, AapProbe { null }),
+                gate = TransportGate(diagnostics, AapProbe { ProbeOutcome.NoPairedDevice }),
                 diagnostics = diagnostics,
                 scope = backgroundScope,
                 clock = { 0L },

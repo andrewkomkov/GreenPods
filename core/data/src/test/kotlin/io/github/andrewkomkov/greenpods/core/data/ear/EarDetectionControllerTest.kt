@@ -31,8 +31,16 @@ class EarDetectionControllerTest {
         }
     }
 
+    /** Virtual time, so the post-pause settle window can be stepped over deliberately. */
+    private var now = 1_000L
+
     private fun controller(actuator: PlaybackActuator) =
-        EarDetectionController(pods = emptyFlow(), settings = emptyFlow(), actuator = actuator)
+        EarDetectionController(
+            pods = emptyFlow(),
+            settings = emptyFlow(),
+            actuator = actuator,
+            now = { now },
+        )
 
     private fun pod(
         primary: WearState,
@@ -85,7 +93,9 @@ class EarDetectionControllerTest {
         controller.onPod(pod(WearState.IN_EAR), GreenPodsSettings.Default)
         controller.onPod(pod(WearState.OUT_OF_EAR), GreenPodsSettings.Default)
 
-        // The user hits play with the bud still out, then pauses again themselves.
+        // Well after our own pause has settled, the user hits play with the bud still
+        // out, then pauses again themselves. That pause is theirs, not ours.
+        now += 10_000L
         actuator.playing = true
         controller.onPod(pod(WearState.OUT_OF_EAR), GreenPodsSettings.Default)
         actuator.playing = false
@@ -93,6 +103,27 @@ class EarDetectionControllerTest {
         controller.onPod(pod(WearState.IN_EAR), GreenPodsSettings.Default)
 
         actuator.performed shouldBe listOf(MediaAction.PAUSE)
+    }
+
+    @Test
+    fun `an audio state that lags our own pause does not lose us the resume`() {
+        // Observed on a Pixel 8: AudioManager keeps reporting music as active for a
+        // moment after a pause, and advertisements arrive every couple of seconds. If
+        // that stale reading counted, auto-resume would silently stop working.
+        val actuator = FakeActuator()
+        val controller = controller(actuator)
+
+        controller.onPod(pod(WearState.IN_EAR), GreenPodsSettings.Default)
+        controller.onPod(pod(WearState.OUT_OF_EAR), GreenPodsSettings.Default)
+
+        actuator.playing = true
+        now += 500L
+        controller.onPod(pod(WearState.OUT_OF_EAR), GreenPodsSettings.Default)
+        actuator.playing = false
+
+        controller.onPod(pod(WearState.IN_EAR), GreenPodsSettings.Default)
+
+        actuator.performed shouldBe listOf(MediaAction.PAUSE, MediaAction.RESUME)
     }
 
     @Test

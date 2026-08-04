@@ -64,6 +64,7 @@ class GreenPodsApplication : Application() {
             pods = podRepository.pods,
             settings = settingsRepository.settings,
             actuator = AndroidPlaybackActuator(this),
+            diagnostics = diagnostics,
         )
     }
 

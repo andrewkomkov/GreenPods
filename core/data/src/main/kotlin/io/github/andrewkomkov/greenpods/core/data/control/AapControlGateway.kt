@@ -1,12 +1,12 @@
 package io.github.andrewkomkov.greenpods.core.data.control
 
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothManager
 import android.content.Context
 import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapSession
 import io.github.andrewkomkov.greenpods.core.data.PodRepository
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
+import io.github.andrewkomkov.greenpods.core.data.transport.BondedPodResolver
 import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -23,11 +23,12 @@ import kotlinx.coroutines.launch
  * noise-control mode is never shown as current.
  */
 class AapControlGateway(
-    private val context: Context,
+    context: Context,
     private val repository: PodRepository,
     private val diagnostics: DiagnosticsLog,
     private val scope: CoroutineScope,
     private val session: AapSession = AapSession(),
+    private val resolver: BondedPodResolver = BondedPodResolver(context),
 ) : PodControlGateway {
     private var connectedAddress: String? = null
     private var readerJob: Job? = null
@@ -38,10 +39,10 @@ class AapControlGateway(
         if (connectedAddress == address && readerJob?.isActive == true) return true
         disconnect()
 
-        val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter ?: return false
-        val device =
-            runCatching { adapter.bondedDevices?.firstOrNull { it.address == address } }.getOrNull()
-                ?: return false
+        // The address here comes from an advertisement, which uses a rotating private
+        // address — the channel has to be opened to the paired classic address instead.
+        val resolution = resolver.resolve(address)
+        val device = (resolution as? BondedPodResolver.Resolution.Resolved)?.device ?: return false
 
         connectedAddress = address
         readerJob =

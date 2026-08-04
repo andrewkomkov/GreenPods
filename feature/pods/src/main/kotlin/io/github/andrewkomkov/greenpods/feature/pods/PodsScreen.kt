@@ -112,6 +112,11 @@ private fun PodCard(
                     label = "Case",
                     levelPercent = pod.battery.case.levelPercent,
                     charging = pod.battery.case.isCharging,
+                    // The case only puts its charge in the advertisement when it has
+                    // reason to — with the lid open, or the buds inside. A closed case in
+                    // a pocket sends the "unknown" sentinel, and a bare dash reads as a
+                    // broken app rather than as the protocol working as designed.
+                    caption = if (pod.battery.case.levelPercent == null) "open the lid" else "",
                 )
             }
 

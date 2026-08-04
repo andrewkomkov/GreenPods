@@ -8,6 +8,7 @@ import io.github.andrewkomkov.greenpods.core.data.PodRepository
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.environment.Environment
 import io.github.andrewkomkov.greenpods.core.data.transport.AapProbe
+import io.github.andrewkomkov.greenpods.core.data.transport.ProbeOutcome
 import io.github.andrewkomkov.greenpods.core.data.transport.TransportGate
 import io.github.andrewkomkov.greenpods.core.model.BatteryState
 import io.github.andrewkomkov.greenpods.core.model.EarDetectionState
@@ -51,7 +52,7 @@ class PodsViewModelTest {
         val diagnostics = DiagnosticsLog(clock = { 0L })
         return PodRepository(
             source = source(sightings),
-            gate = TransportGate(diagnostics, AapProbe { null }),
+            gate = TransportGate(diagnostics, AapProbe { ProbeOutcome.NoPairedDevice }),
             diagnostics = diagnostics,
             scope = backgroundScope,
             clock = { 0L },

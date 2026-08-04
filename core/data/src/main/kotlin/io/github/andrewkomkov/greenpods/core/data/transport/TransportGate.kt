@@ -16,15 +16,39 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
+ * What came of trying to reach an accessory over the Apple protocol.
+ *
+ * "Could not even try" is kept distinct from "tried and was refused" because the two
+ * need different things from the user — pair the buds, versus accept that this phone's
+ * Bluetooth stack will not carry the channel.
+ */
+sealed interface ProbeOutcome {
+    /** A channel attempt was actually made. */
+    data class Attempted(
+        val availability: AapAvailability,
+    ) : ProbeOutcome
+
+    /** No paired accessory to open a channel to. */
+    data object NoPairedDevice : ProbeOutcome
+
+    /** Several paired Apple accessories; a private address cannot say which advertised. */
+    data class Ambiguous(
+        val candidates: List<String>,
+    ) : ProbeOutcome
+
+    /** Bluetooth is off, or the Connect permission is missing. */
+    data object Unavailable : ProbeOutcome
+}
+
+/**
  * Attempts the AAP channel for one accessory address.
  *
- * An interface rather than a direct call into [io.github.andrewkomkov.greenpods.core
- * .bluetooth.aap.AapTransport] so the gate — where all the branching lives — can be
- * tested for every outcome on a JVM, including the ones no real phone can produce.
+ * An interface rather than a direct call into `AapTransport`, so the gate — where all
+ * the branching lives — can be tested for every outcome on a JVM, including the ones no
+ * real phone can produce.
  */
 fun interface AapProbe {
-    /** Returns the outcome, or null when the address cannot be resolved to a device. */
-    suspend fun probe(address: String): AapAvailability?
+    suspend fun probe(address: String): ProbeOutcome
 }
 
 /**
@@ -83,7 +107,7 @@ class TransportGate(
             val cached = _aapStatuses.value[address]
             if (cached != null && !force) return@withLock cached
 
-            val status = aapProbe.probe(address)?.let(::describe) ?: unresolvable()
+            val status = describe(aapProbe.probe(address))
 
             diagnostics.record(
                 category = DiagnosticCategory.TRANSPORT,
@@ -119,14 +143,35 @@ class TransportGate(
             )
         }
 
-    private fun unresolvable(): TransportStatus =
-        TransportStatus(
-            transport = Transport.AAP_L2CAP,
-            availability = TransportAvailability.UNAVAILABLE,
-            reason =
-                "These AirPods are not paired with this phone, so there is no device to " +
-                    "open a channel to. Pair them in Bluetooth settings and check again.",
-        )
+    private fun describe(outcome: ProbeOutcome): TransportStatus =
+        when (outcome) {
+            is ProbeOutcome.Attempted -> {
+                describe(outcome.availability)
+            }
+
+            ProbeOutcome.NoPairedDevice -> {
+                unavailable(
+                    "No paired AirPods to open a channel to. Settings live behind a normal " +
+                        "Bluetooth pairing, so pair them first — battery and ear detection " +
+                        "work either way.",
+                )
+            }
+
+            is ProbeOutcome.Ambiguous -> {
+                unavailable(
+                    "More than one paired Apple accessory (${outcome.candidates.joinToString(", ")}), " +
+                        "and the advertisement uses a rotating private address, so GreenPods " +
+                        "cannot tell which of them it came from.",
+                )
+            }
+
+            ProbeOutcome.Unavailable -> {
+                unavailable("Bluetooth is off, or the Connect permission has not been granted.")
+            }
+        }
+
+    private fun unavailable(reason: String): TransportStatus =
+        TransportStatus(Transport.AAP_L2CAP, TransportAvailability.UNAVAILABLE, reason)
 
     private fun describe(availability: AapAvailability): TransportStatus {
         val (state, reason) =
@@ -151,6 +196,15 @@ class TransportGate(
                     TransportAvailability.UNAVAILABLE to
                         "The buds refused the channel mode this phone's Bluetooth stack offers. " +
                         "This is the usual outcome on stock Android."
+                }
+
+                is AapAvailability.ChannelNotEstablished -> {
+                    TransportAvailability.UNAVAILABLE to
+                        "Your AirPods are paired and connected, and this phone accepted the " +
+                        "request — but the settings channel never came up. That is what a stock " +
+                        "Android Bluetooth stack does with PSM 0x1001; reaching it needs a " +
+                        "patched stack, which means root. Battery, ear detection and auto-pause " +
+                        "are unaffected. (${availability.route})"
                 }
 
                 AapAvailability.NotPermitted -> {

@@ -9,6 +9,7 @@ import io.github.andrewkomkov.greenpods.core.data.PodRepository
 import io.github.andrewkomkov.greenpods.core.data.control.PodControlGateway
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.transport.AapProbe
+import io.github.andrewkomkov.greenpods.core.data.transport.ProbeOutcome
 import io.github.andrewkomkov.greenpods.core.data.transport.TransportGate
 import io.github.andrewkomkov.greenpods.core.model.BatteryState
 import io.github.andrewkomkov.greenpods.core.model.EarDetectionState
@@ -105,10 +106,10 @@ class ControlsViewModelTest {
 
     private fun TestScope.repository(
         model: PodModel = PodModel.AIRPODS_PRO_2,
-        aap: AapAvailability? = AapAvailability.ChannelModeRefused,
+        aap: AapAvailability = AapAvailability.ChannelModeRefused,
     ): Pair<PodRepository, TransportGate> {
         val diagnostics = DiagnosticsLog(clock = { 0L })
-        val gate = TransportGate(diagnostics, AapProbe { aap })
+        val gate = TransportGate(diagnostics, AapProbe { ProbeOutcome.Attempted(aap) })
         val sightings: Flow<PodSighting> = flow { emit(sighting(model)) }
         val repository =
             PodRepository(

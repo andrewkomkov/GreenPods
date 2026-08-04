@@ -14,6 +14,7 @@ import io.github.andrewkomkov.greenpods.core.model.TransportStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.runningFold
@@ -81,6 +83,17 @@ class PodRepository(
     private val overlays = MutableStateFlow<Map<String, PodOverlay>>(emptyMap())
     private val _scanFailure = MutableStateFlow<String?>(null)
 
+    /**
+     * Sightings fed in by hand rather than heard on the air.
+     *
+     * The states worth testing are physical — a bud leaving an ear, a case closing, a
+     * battery crossing a threshold — and none of them can be produced on demand from a
+     * laptop. Merging an injectable stream into the same pipeline the radio feeds means
+     * the whole chain is exercised, not a mock of it. Only the debug build exposes a way
+     * to write to it.
+     */
+    private val injected = MutableSharedFlow<PodSighting>(extraBufferCapacity = INJECT_BUFFER)
+
     /** Set when the scanner cannot run — Bluetooth off, permission missing, radio busy. */
     val scanFailure: StateFlow<String?> = _scanFailure.asStateFlow()
 
@@ -90,8 +103,7 @@ class PodRepository(
             .map { it.scanMode }
             .distinctUntilChanged()
             .flatMapLatest { scanMode ->
-                source
-                    .sightings(scanMode)
+                merge(source.sightings(scanMode), injected)
                     .onStart { _scanFailure.value = null }
                     .catch { error ->
                         // Scanning stops when Bluetooth is switched off or the permission
@@ -147,6 +159,16 @@ class PodRepository(
         address: String,
         force: Boolean = false,
     ): TransportStatus = gate.probeAap(address, force)
+
+    /**
+     * Feeds a sighting into the pipeline as though the radio had heard it.
+     *
+     * Used by the debug build's adb surface to drive states that cannot be produced on
+     * demand. It goes through exactly the same accumulate-age-decorate path as a real
+     * advertisement, which is the point: a test that bypasses the pipeline proves
+     * nothing about the pipeline.
+     */
+    fun injectSighting(sighting: PodSighting): Boolean = injected.tryEmit(sighting)
 
     /** Folds a decoded AAP message into the overlay for one accessory. */
     fun onAapEvent(
@@ -236,5 +258,8 @@ class PodRepository(
 
         /** How long the shared scan outlives its last subscriber. */
         const val SHARE_TIMEOUT_MILLIS = 5_000L
+
+        /** Room for a short burst of injected sightings without blocking the caller. */
+        const val INJECT_BUFFER = 16
     }
 }

@@ -10,6 +10,7 @@ import io.github.andrewkomkov.greenpods.core.bluetooth.ble.PodSightingSource
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.transport.AapProbe
+import io.github.andrewkomkov.greenpods.core.data.transport.ProbeOutcome
 import io.github.andrewkomkov.greenpods.core.data.transport.TransportGate
 import io.github.andrewkomkov.greenpods.core.model.BatteryComponent
 import io.github.andrewkomkov.greenpods.core.model.BatteryState
@@ -82,7 +83,7 @@ class PodRepositoryTest {
         diagnostics: DiagnosticsLog = DiagnosticsLog(clock = { 0L }),
     ) = PodRepository(
         source = source,
-        gate = TransportGate(diagnostics, AapProbe { null }),
+        gate = TransportGate(diagnostics, AapProbe { ProbeOutcome.NoPairedDevice }),
         diagnostics = diagnostics,
         scope = backgroundScope,
         clock = now,
@@ -264,7 +265,7 @@ class PodRepositoryTest {
             val repository =
                 PodRepository(
                     source = source,
-                    gate = TransportGate(DiagnosticsLog(), AapProbe { null }),
+                    gate = TransportGate(DiagnosticsLog(), AapProbe { ProbeOutcome.NoPairedDevice }),
                     diagnostics = DiagnosticsLog(),
                     scope = backgroundScope,
                     settings =

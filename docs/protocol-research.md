@@ -15,11 +15,15 @@ where each fact came from and what is still unknown. Treat anything marked
 
 ### Why AAP is gated
 
-Android's public `BluetoothDevice.createInsecureL2capChannel` validates that the PSM
-is in `0x0001..0x00FF`, so `0x1001` is rejected outright. The hidden
-`createInsecureL2capSocket` gets past that check but real AirPods then refuse the
+Historically, Android's public `BluetoothDevice.createInsecureL2capChannel` validated
+that the PSM is in `0x0001..0x00FF`, so `0x1001` was rejected outright; the hidden
+`createInsecureL2capSocket` got past that check, and real AirPods then refused the
 channel with *"Peer does not support our desired channel types"*, because the stack
 negotiates a channel mode the buds do not accept.
+
+On Android 17 the first half of that no longer holds — the public call accepts PSM
+`0x1001` and the connect fails afterwards instead. See the Pixel 8 field notes below.
+The outcome is unchanged; only the symptom moved.
 
 LibrePods works around this with a Magisk module (`btl2capfix.zip`) that patches
 `libbluetooth_jni.so`, or with an Xposed hook. Both require root or LSPosed.
@@ -43,6 +47,30 @@ Two completely separate paths, and the difference is a firmware decision by Appl
 For the AAP path, `ControlCommand.HRM_STATE` (`0x30`) is known to enable and disable
 the sensor. **The measurement frame layout is not publicly documented.** LibrePods
 declares an `HRM` capability and the toggle, but ships no BPM decoder.
+
+### The sensor is gated on a workout, not just on the toggle
+
+Apple only collects heart rate on AirPods Pro 3 **while a workout is running, or while
+the Health app is open**. There is no setting for continuous monitoring; owners report
+that the sensor is simply idle the rest of the time, and Apple's own material describes
+it as a workout feature. That is a product decision, not a protocol limitation — the
+battery cost of running an optical sensor continuously is the stated reason.
+
+Two consequences, and they change what "implement heart rate" even means:
+
+1. **A passive listener will see nothing.** Opening the AAP channel and waiting is not
+   a test of anything. The sensor has to be told to start, and `HRM_STATE` (`0x30`) is
+   the only known candidate for saying so. Whether that command alone starts the stream,
+   or whether the accessory additionally expects a workout/session context to be
+   declared, is **unverified** — and it is now the first question to answer, ahead of
+   decoding the frame.
+2. **Captures must be taken during a workout.** A PacketLogger session recorded while
+   sitting still will contain no heart-rate frames at all, however long it runs. Start a
+   Fitness workout on the iPhone first — see the capture recipe below.
+
+GreenPods ships `AapCommands.heartRateSensor(enabled)` for the toggle and nothing else.
+Sending a command whose reply cannot be read would be a button that does nothing, so it
+is not offered in the UI until there is a decoder to pair it with.
 
 ### How to close that gap
 
@@ -121,6 +149,51 @@ Things learned by running GreenPods on real hardware, as opposed to from capture
   AirPods are not paired with this phone" rather than blaming the Bluetooth stack for a
   refusal that never happened. Whether this stack would refuse PSM `0x1001` with buds
   present remains **unverified**.
+
+### Pixel 8 (shiba), Android 17 / API 37, unrooted, AirPods Pro 3 paired and connected — 2026-08-04
+
+The first run against real hardware, and it moved three things from theory to fact.
+
+- **The advertised address is never the paired address.** The buds advertise from a
+  resolvable private address that rotates — observed changing between
+  `59:66:D4:DD:DB:E6`, `62:CC:F7:AC:6F:E7` and `79:F8:27:66:05:F5` within minutes —
+  while the bond sits on the classic address the system shows in Bluetooth settings.
+  Looking the advertised address up among bonded devices therefore finds nothing, on
+  every phone, always. `BondedPodResolver` correlates the two the only way an
+  unprivileged app can: by noticing there is exactly one paired Apple audio accessory.
+  With more than one, the ambiguity is reported rather than guessed at.
+- **The public API no longer rejects PSM 0x1001.** These notes previously said
+  `createInsecureL2capChannel` validates the PSM into `0x0001..0x00FF`. On Android 17
+  that call *succeeded* — the reflective fallback was never reached, and the failure
+  came later, from the connect: `read failed, socket might closed or timeout, read
+  ret: -1`. So on current Android the blocker has moved: the socket is created and the
+  channel simply never comes up. Whether the range check was relaxed or moved is
+  **unverified**; what is certain is that a PSM rejection is no longer the symptom to
+  look for. The route actually taken is now reported in the failure text.
+- **The accessory being paired, connected and playing audio changes nothing.** All of
+  that was true during this test. The Apple protocol channel still did not establish,
+  which is consistent with everything above: without a patched stack it does not matter
+  how healthy the ordinary Bluetooth connection is.
+
+Also confirmed on this device:
+
+- Model detection from the advertisement is *more precise than the system's*: Android
+  knows the accessory only as "AirPods Pro", while the proximity payload identifies it
+  as AirPods Pro 3 (`0x2720`).
+- **The case reports its charge only when it has reason to.** With both buds in the
+  ears and the case closed, the case nibble is the `0x0F` unknown sentinel on every
+  advertisement — polled repeatedly, never a value — while the per-bud levels update
+  live (left drifted 70 % → 60 % during testing). The UI shows a dash and "open the
+  lid" rather than inventing a number. This is the protocol behaving as designed, and
+  it is the single most common thing mistaken for a bug.
+- Auto-pause and auto-resume were driven end to end over adb against Spotify:
+  `PLAYING → PAUSED` on a bud leaving an ear, `PAUSED → PLAYING` on it going back in.
+- `AudioManager.isMusicActive` **lags a pause**. It keeps reporting audio as active for
+  a moment afterwards, and since advertisements arrive every couple of seconds, a naive
+  "anything playing means nothing is paused" check hands ownership of our own pause away
+  within milliseconds of making it — after which auto-resume correctly refuses to resume
+  a pause it no longer owns, and silently never fires. A short settle window after our
+  own pause is what makes the two rules coexist.
 
 ## Sources
 

@@ -24,15 +24,18 @@ import io.kotest.matchers.string.shouldContain as shouldContainText
  */
 class TransportGateTest {
     private class RecordingProbe(
-        private val outcome: AapAvailability?,
+        private val outcome: ProbeOutcome,
     ) : AapProbe {
         var calls = 0
 
-        override suspend fun probe(address: String): AapAvailability? {
+        override suspend fun probe(address: String): ProbeOutcome {
             calls++
             return outcome
         }
     }
+
+    /** Most tests care about a channel attempt, not about resolving the pairing. */
+    private fun attempted(availability: AapAvailability) = RecordingProbe(ProbeOutcome.Attempted(availability))
 
     private fun pod(model: PodModel = PodModel.AIRPODS_PRO_2) = PodState(address = ADDRESS, model = model)
 
@@ -43,7 +46,7 @@ class TransportGateTest {
 
     @Test
     fun `before any probe the Apple protocol reads as not checked`() {
-        val (gate, _) = gate(RecordingProbe(AapAvailability.Available))
+        val (gate, _) = gate(attempted(AapAvailability.Available))
 
         val decorated = gate.decorate(pod())
 
@@ -54,7 +57,7 @@ class TransportGateTest {
     @Test
     fun `a successful probe unlocks the write features`() =
         runTest {
-            val (gate, _) = gate(RecordingProbe(AapAvailability.Available))
+            val (gate, _) = gate(attempted(AapAvailability.Available))
 
             gate.probeAap(ADDRESS)
             val decorated = gate.decorate(pod())
@@ -66,7 +69,7 @@ class TransportGateTest {
     @Test
     fun `a refused channel is data, not an exception, and says what refused it`() =
         runTest {
-            val (gate, _) = gate(RecordingProbe(AapAvailability.ChannelModeRefused))
+            val (gate, _) = gate(attempted(AapAvailability.ChannelModeRefused))
 
             val status = gate.probeAap(ADDRESS)
 
@@ -79,7 +82,7 @@ class TransportGateTest {
     fun `each failure mode gets its own explanation`() =
         runTest {
             suspend fun reasonFor(outcome: AapAvailability): String {
-                val (gate, _) = gate(RecordingProbe(outcome))
+                val (gate, _) = gate(attempted(outcome))
                 return gate.probeAap(ADDRESS).reason
             }
 
@@ -90,17 +93,58 @@ class TransportGateTest {
         }
 
     @Test
+    fun `a channel that never comes up says so, and says what still works`() =
+        runTest {
+            val (gate, _) =
+                gate(attempted(AapAvailability.ChannelNotEstablished("public createInsecureL2capChannel")))
+
+            val reason = gate.probeAap(ADDRESS).reason
+
+            // The user's buds are paired, connected and playing audio — blaming the
+            // pairing here would send them off to fix something that is not broken.
+            reason shouldContainText "paired and connected"
+            reason shouldContainText "never came up"
+            reason shouldContainText "auto-pause are unaffected"
+            // Which API got that far is the part worth putting in a bug report.
+            reason shouldContainText "public createInsecureL2capChannel"
+        }
+
+    @Test
     fun `an unpaired accessory is told so, rather than blamed on the phone`() =
         runTest {
-            val (gate, _) = gate(RecordingProbe(null))
+            val (gate, _) = gate(RecordingProbe(ProbeOutcome.NoPairedDevice))
 
-            gate.probeAap(ADDRESS).reason shouldContainText "not paired"
+            val reason = gate.probeAap(ADDRESS).reason
+            reason shouldContainText "No paired AirPods"
+            // Battery and ear detection are unaffected, and saying so stops the message
+            // reading as "the app is broken".
+            reason shouldContainText "work either way"
+        }
+
+    @Test
+    fun `two paired Apple accessories are reported as ambiguous, not guessed between`() =
+        runTest {
+            val (gate, _) =
+                gate(RecordingProbe(ProbeOutcome.Ambiguous(listOf("AirPods Pro", "Beats Fit Pro"))))
+
+            val reason = gate.probeAap(ADDRESS).reason
+            reason shouldContainText "AirPods Pro, Beats Fit Pro"
+            // The advertisement's private address is exactly why this cannot be resolved.
+            reason shouldContainText "rotating private address"
+        }
+
+    @Test
+    fun `Bluetooth being off is not reported as a protocol refusal`() =
+        runTest {
+            val (gate, _) = gate(RecordingProbe(ProbeOutcome.Unavailable))
+
+            gate.probeAap(ADDRESS).reason shouldContainText "Bluetooth is off"
         }
 
     @Test
     fun `probing twice does not re-open the socket`() =
         runTest {
-            val probe = RecordingProbe(AapAvailability.ChannelModeRefused)
+            val probe = attempted(AapAvailability.ChannelModeRefused)
             val (gate, _) = gate(probe)
 
             repeat(5) { gate.probeAap(ADDRESS) }
@@ -112,7 +156,7 @@ class TransportGateTest {
     @Test
     fun `an explicit re-check does probe again`() =
         runTest {
-            val probe = RecordingProbe(AapAvailability.ChannelModeRefused)
+            val probe = attempted(AapAvailability.ChannelModeRefused)
             val (gate, _) = gate(probe)
 
             gate.probeAap(ADDRESS)
@@ -124,7 +168,7 @@ class TransportGateTest {
     @Test
     fun `invalidating forgets cached results`() =
         runTest {
-            val probe = RecordingProbe(AapAvailability.ChannelModeRefused)
+            val probe = attempted(AapAvailability.ChannelModeRefused)
             val (gate, _) = gate(probe)
 
             gate.probeAap(ADDRESS)
@@ -138,7 +182,7 @@ class TransportGateTest {
     @Test
     fun `every probe is recorded in diagnostics`() =
         runTest {
-            val (gate, log) = gate(RecordingProbe(AapAvailability.PsmRejected))
+            val (gate, log) = gate(attempted(AapAvailability.PsmRejected))
 
             gate.probeAap(ADDRESS)
 
@@ -147,7 +191,7 @@ class TransportGateTest {
 
     @Test
     fun `GATT availability follows the model, not the phone`() {
-        val (gate, _) = gate(RecordingProbe(AapAvailability.ChannelModeRefused))
+        val (gate, _) = gate(attempted(AapAvailability.ChannelModeRefused))
 
         gate.decorate(pod(PodModel.POWERBEATS_PRO_2)).statusOf(Transport.GATT).isAvailable shouldBe true
         gate.decorate(pod(PodModel.AIRPODS_PRO_3)).statusOf(Transport.GATT).isAvailable shouldBe false
@@ -156,7 +200,7 @@ class TransportGateTest {
     @Test
     fun `AirPods Pro 3 heart rate stays locked even with the channel open`() =
         runTest {
-            val (gate, _) = gate(RecordingProbe(AapAvailability.Available))
+            val (gate, _) = gate(attempted(AapAvailability.Available))
             gate.probeAap(ADDRESS)
 
             val decorated = gate.decorate(pod(PodModel.AIRPODS_PRO_3))

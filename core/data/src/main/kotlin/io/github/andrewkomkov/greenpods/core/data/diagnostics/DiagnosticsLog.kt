@@ -21,6 +21,9 @@ enum class DiagnosticCategory {
 
     /** Update checks. */
     UPDATE,
+
+    /** Auto-pause decisions: what changed, and what playback did about it. */
+    MEDIA,
 }
 
 data class DiagnosticEvent(

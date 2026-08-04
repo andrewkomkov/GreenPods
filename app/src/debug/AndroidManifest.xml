@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      The adb command surface. Exported so `am broadcast` can reach it, and confined to
+      the debug source set so no release build ever ships it. See docs/adb.md.
+    -->
+    <application>
+        <receiver
+            android:name=".debug.GreenPodsDebugReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.andrewkomkov.greenpods.DEBUG" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
