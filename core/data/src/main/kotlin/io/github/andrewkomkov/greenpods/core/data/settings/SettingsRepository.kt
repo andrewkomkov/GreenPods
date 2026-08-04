@@ -129,6 +129,7 @@ class SettingsRepository(
     companion object {
         private const val FILE_NAME = "greenpods_settings"
 
+        /** Prefer `GreenPodsStore`, which shares one store with the service memory. */
         fun create(context: Context): SettingsRepository =
             SettingsRepository(
                 PreferenceDataStoreFactory.create { context.preferencesDataStoreFile(FILE_NAME) },

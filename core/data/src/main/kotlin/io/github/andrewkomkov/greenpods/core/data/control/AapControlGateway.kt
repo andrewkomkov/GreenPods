@@ -3,18 +3,21 @@ package io.github.andrewkomkov.greenpods.core.data.control
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapEvent
 import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapSession
 import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapTransport
 import io.github.andrewkomkov.greenpods.core.data.PodRepository
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.transport.BondedPodResolver
+import io.github.andrewkomkov.greenpods.core.data.transport.HidServiceMemory
 import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The real control path: an [AapSession] over an L2CAP channel to a bonded accessory.
@@ -37,6 +40,16 @@ class AapControlGateway(
             AapTransport(adapter = context.getSystemService(BluetoothManager::class.java)?.adapter),
         ),
     private val resolver: BondedPodResolver = BondedPodResolver(context),
+    /**
+     * What this accessory has already said about its own sensor services.
+     *
+     * Seeded into the session on connect and updated whenever a live announcement
+     * arrives. Without it, an app that restarts while the earbuds stay connected can
+     * never learn the heart-rate service id again on that link — the accessory answers
+     * the "describe yourself" request once per connection and not again. See
+     * [HidServiceMemory] for why remembering an answer is still discovery.
+     */
+    private val serviceMemory: HidServiceMemory = HidServiceMemory.None,
 ) : PodControlGateway {
     private var connectedAddress: String? = null
     private var readerJob: Job? = null
@@ -66,14 +79,25 @@ class AapControlGateway(
                     }.onCompletion { cause ->
                         repository.clearOverlay(address)
                         repository.onAapChannelClosed(address, cause?.message ?: "channel ended")
-                    }.collect { event -> repository.onAapEvent(address, event) }
+                    }.collect { event ->
+                        // A live announcement replaces whatever was remembered — the
+                        // accessory's current word about itself always wins.
+                        if (event is AapEvent.HidServices) {
+                            runCatching { serviceMemory.remember(address, event.services) }
+                        }
+                        repository.onAapEvent(address, event)
+                    }
             }
 
         // Announce the channel only once it is actually carrying traffic. Announcing on
         // subscription would unlock every gated feature a moment before the accessory
         // could answer, which reads as a feature that does nothing.
         scope.launch {
-            if (session.awaitReady()) repository.onAapChannelOpen(address)
+            if (!session.awaitReady()) return@launch
+            // Seed before announcing, so anything that reacts to the channel opening
+            // already has the service ids this accessory gave us last time.
+            runCatching { session.restoreServices(serviceMemory.remembered(address)) }
+            repository.onAapChannelOpen(address)
         }
         return true
     }
@@ -166,6 +190,16 @@ class AapControlGateway(
         intervalMicros: Int,
     ): Boolean = withChannel(address) { session.startHeartRate(serviceId, intervalMicros) }
 
+    /**
+     * Asks the accessory to announce its sensor services, on whatever channel is open.
+     *
+     * Opens one first if there is none: the request is only meaningful on a live channel,
+     * and a heart-rate session that has just been switched on has every reason to want
+     * one. Returns false when no channel can be had, which is an ordinary outcome.
+     */
+    override suspend fun describeServices(address: String): Boolean =
+        withChannel(address) { session.requestNotifications() }
+
     /** Interval zero: the sensor stops in the earbuds, not merely on screen (FR-014). */
     override suspend fun stopHeartRate(
         address: String,
@@ -187,6 +221,38 @@ class AapControlGateway(
             )
             return false
         }
-        return write()
+
+        // Bounded, because a write to this socket can block for ever.
+        //
+        // `BluetoothSocket` has no write timeout: if the accessory stops reading — which
+        // is exactly what a half-dead channel looks like — `OutputStream.write` never
+        // returns. The heart-rate controller runs its whole state machine on one
+        // collector, so a command that never returns takes the feature with it: observed
+        // on hardware as a stop frame that was logged, a state that was never published,
+        // and heart rate that could not be switched back on without restarting the app.
+        //
+        // The timeout does not unblock the socket thread — nothing can — but it unblocks
+        // the *caller*, which is the part that matters. Same rule as the health store:
+        // this transport is something the session talks to, never something it waits on.
+        return withTimeoutOrNull(WRITE_TIMEOUT_MILLIS) { write() } ?: run {
+            diagnostics.record(
+                DiagnosticCategory.TRANSPORT,
+                "Apple protocol write did not complete",
+                "The channel accepted the bytes but never finished writing them. " +
+                    "Treating it as failed so the session keeps running.",
+            )
+            // The channel is not trustworthy after this; drop it so the next attempt
+            // starts clean rather than queueing behind a stuck write.
+            disconnect()
+            false
+        }
+    }
+
+    private companion object {
+        /**
+         * Generous for a handful of bytes over an open channel, and short enough that a
+         * user waiting for a toggle does not conclude the app has hung.
+         */
+        const val WRITE_TIMEOUT_MILLIS = 2_000L
     }
 }

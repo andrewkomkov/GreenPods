@@ -280,9 +280,18 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
         app.applicationScope.launch {
             when (action.lowercase()) {
                 "status", "" -> {
+                    // The outcome counters are what make "nothing is in Health Connect"
+                    // diagnosable: they separate never-attempted from attempted-and-
+                    // skipped from attempted-and-failed, which used to look identical.
+                    // Counts and reasons only — never a sample (FR-023).
+                    val outcome = link.outcome
                     reply(
                         "health: available=${link.availability().isAvailable} " +
                             "write=${link.hasWritePermission()} read=${link.hasReadPermission()} " +
+                            "flushes=${outcome.flushesAttempted} records=${outcome.recordsWritten} " +
+                            "samples=${outcome.samplesWritten} " +
+                            "lastSkip=${outcome.lastSkipReason ?: "none"} " +
+                            "lastError=${outcome.lastError ?: "none"} " +
                             ":: ${link.availability().sentence}",
                     )
                 }

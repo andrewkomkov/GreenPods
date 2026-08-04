@@ -178,19 +178,63 @@ class HealthConnectLink(
         return runCatching { store.deleteOwnRecords() }.isSuccess
     }
 
+    /**
+     * Why the last write did what it did — counts and reasons, never values.
+     *
+     * Every failure in here is swallowed on purpose: a provider that is updating must not
+     * take the reading off the screen. Swallowed silently, though, the integration is
+     * undebuggable — "nothing is in Health Connect" has six possible causes and the app
+     * used to distinguish none of them. This is the smallest thing that separates them,
+     * and it holds no sample: a count and a sentence (FR-023).
+     */
+    data class WriteOutcome(
+        val flushesAttempted: Int = 0,
+        val recordsWritten: Int = 0,
+        val samplesWritten: Int = 0,
+        val lastSkipReason: String? = null,
+        val lastError: String? = null,
+    )
+
+    @Volatile
+    var outcome: WriteOutcome = WriteOutcome()
+        private set
+
     private suspend fun write(
         address: String,
         batch: HeartRateBatch,
     ) {
-        val store = client ?: return
-        if (!settings.first().heartRateHealthConnectEnabled) return
-        if (!store.availability().isAvailable) return
+        outcome = outcome.copy(flushesAttempted = outcome.flushesAttempted + 1)
+
+        val store = client ?: return skip("No health store on this phone.")
+        if (!settings.first().heartRateHealthConnectEnabled) {
+            return skip("The Health Connect integration is switched off in GreenPods.")
+        }
+        val availability = store.availability()
+        if (!availability.isAvailable) return skip(availability.sentence)
         // Checked here, per flush, rather than once at start: revocation happens from
         // outside the app and must stop the very next write (FR-018).
-        if (!store.hasWritePermission()) return
+        if (!store.hasWritePermission()) return skip("GreenPods does not have permission to write heart rate.")
 
         val device = devices[address] ?: HealthDevice(APPLE, "AirPods")
         runCatching { store.insert(batch, device) }
+            .onSuccess {
+                outcome =
+                    outcome.copy(
+                        recordsWritten = outcome.recordsWritten + 1,
+                        samplesWritten = outcome.samplesWritten + batch.samples.size,
+                        lastSkipReason = null,
+                        lastError = null,
+                    )
+            }.onFailure { error ->
+                // Still swallowed — the reading stays on screen — but no longer invisible.
+                // A provider that rejects every write looked exactly like one that was
+                // never asked, and that cost a whole debugging session.
+                outcome = outcome.copy(lastError = error.message ?: error::class.simpleName ?: "insert failed")
+            }
+    }
+
+    private fun skip(reason: String) {
+        outcome = outcome.copy(lastSkipReason = reason)
     }
 
     private companion object {

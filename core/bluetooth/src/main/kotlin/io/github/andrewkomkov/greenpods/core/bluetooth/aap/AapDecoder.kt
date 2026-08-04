@@ -252,6 +252,25 @@ class AapDecoder(
         return AapEvent.UnhandledHidReport(serviceId, reportId, report.size, "no decoder for this service")
     }
 
+    /**
+     * Seeds the decoder with services this accessory announced on an **earlier** channel.
+     *
+     * Not a shortcut, and not a violation of FR-002. The accessory announces its services
+     * once per Bluetooth link, in answer to the first request after the link comes up — so
+     * an app that restarts mid-link has lost the announcement and cannot get another one,
+     * and until now that meant heart rate could not be switched on until the earbuds were
+     * put back in the case. Remembering what *this accessory said about itself* is still
+     * discovery; what FR-002 forbids is a constant that happens to match, and a
+     * remembered descriptor is neither constant nor assumed.
+     *
+     * Ignored once a live announcement has arrived: the accessory's current word about
+     * itself always outranks a remembered one.
+     */
+    fun restoreServices(remembered: List<HidService>) {
+        if (services.isNotEmpty() || remembered.isEmpty()) return
+        rememberServices(remembered)
+    }
+
     private fun rememberServices(discovered: List<HidService>) {
         services = discovered
         heartRateServiceId = discovered.firstOrNull { it.isHeartRate }?.id

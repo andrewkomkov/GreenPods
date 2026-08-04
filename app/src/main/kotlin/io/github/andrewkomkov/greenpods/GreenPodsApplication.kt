@@ -2,6 +2,7 @@ package io.github.andrewkomkov.greenpods
 
 import android.app.Application
 import io.github.andrewkomkov.greenpods.core.bluetooth.ble.PodScanner
+import io.github.andrewkomkov.greenpods.core.data.GreenPodsStore
 import io.github.andrewkomkov.greenpods.core.data.PodRepository
 import io.github.andrewkomkov.greenpods.core.data.control.AapControlGateway
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
@@ -16,6 +17,7 @@ import io.github.andrewkomkov.greenpods.core.data.settings.SettingsRepository
 import io.github.andrewkomkov.greenpods.core.data.transport.AndroidAapProbe
 import io.github.andrewkomkov.greenpods.core.data.transport.BondedPodIdentity
 import io.github.andrewkomkov.greenpods.core.data.transport.BondedPodResolver
+import io.github.andrewkomkov.greenpods.core.data.transport.HidServiceMemory
 import io.github.andrewkomkov.greenpods.core.data.transport.TransportGate
 import io.github.andrewkomkov.greenpods.core.data.update.UpdateChecker
 import kotlinx.coroutines.CoroutineScope
@@ -38,7 +40,20 @@ class GreenPodsApplication : Application() {
 
     val diagnostics: DiagnosticsLog by lazy { DiagnosticsLog() }
 
-    val settingsRepository: SettingsRepository by lazy { SettingsRepository.create(this) }
+    /** Settings and the accessory's own description of itself, sharing one store. */
+    private val store: GreenPodsStore by lazy { GreenPodsStore(this) }
+
+    val settingsRepository: SettingsRepository get() = store.settings
+
+    /**
+     * What each accessory has said about its own sensor services.
+     *
+     * Persisted because the announcement happens once per Bluetooth link: an app that
+     * restarts while the earbuds stay connected can never obtain it again on that link,
+     * and without this heart rate could not be switched on until they were put back in
+     * the case.
+     */
+    val hidServiceMemory: HidServiceMemory get() = store.hidServices
 
     val transportGate: TransportGate by lazy {
         TransportGate(diagnostics = diagnostics, aapProbe = AndroidAapProbe(this, diagnostics))
@@ -68,6 +83,7 @@ class GreenPodsApplication : Application() {
             repository = podRepository,
             diagnostics = diagnostics,
             scope = applicationScope,
+            serviceMemory = hidServiceMemory,
         )
     }
 

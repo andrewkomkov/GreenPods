@@ -38,6 +38,16 @@ class AapSession(
             .map(decoder::decode)
             .onCompletion { decoder.resetSession() }
 
+    /**
+     * Seeds this session with what the accessory said about itself on an earlier link.
+     *
+     * See [AapDecoder.restoreServices]. A live announcement always wins.
+     */
+    fun restoreServices(remembered: List<HidService>) = decoder.restoreServices(remembered)
+
+    /** The services the accessory has described, live or remembered. */
+    val describedServices: List<HidService> get() = decoder.knownServices
+
     /** The heart-rate service id the accessory announced, or null before it has. */
     val heartRateServiceId: Int? get() = decoder.discoveredHeartRateServiceId
 

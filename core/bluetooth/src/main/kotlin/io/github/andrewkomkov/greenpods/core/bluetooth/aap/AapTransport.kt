@@ -11,6 +11,7 @@ import androidx.annotation.RequiresApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.callbackFlow
@@ -285,6 +286,36 @@ class AapTransport(
             ready.value = true
 
             val reassembler = AapFrameReassembler()
+            val framesDelivered =
+                java.util.concurrent.atomic
+                    .AtomicInteger(0)
+
+            // A channel that opens and then says nothing is dead, and it does not
+            // announce itself as dead: the socket stays open, writes are accepted, and
+            // reads simply never return anything. Seen twice on hardware — once with a
+            // second app holding the channel, once after a blocked write left the
+            // accessory's end wedged — and both times it looked exactly like a working
+            // channel with a quiet accessory.
+            //
+            // There is no such thing as a quiet accessory here. The handshake is answered
+            // with the whole configuration within a second, every time. So silence past
+            // this point is a diagnosis, and failing fast lets the caller reopen instead
+            // of leaving the user to reconnect the earbuds by hand.
+            val watchdog =
+                CoroutineScope(ioDispatcher).launch {
+                    delay(SILENT_CHANNEL_TIMEOUT_MILLIS)
+                    if (framesDelivered.get() == 0) {
+                        Log.w(TAG, "AAP channel opened but delivered nothing; closing it")
+                        close(
+                            IOException(
+                                "The Apple protocol channel opened but the accessory sent nothing. " +
+                                    "Another app may be holding the channel, or it needs reconnecting.",
+                            ),
+                        )
+                        runCatching { bluetoothSocket.close() }
+                    }
+                }
+
             val reader =
                 CoroutineScope(ioDispatcher).launch {
                     val buffer = ByteArray(READ_BUFFER_BYTES)
@@ -296,6 +327,7 @@ class AapTransport(
                             if (read <= 0) break
                             reassembler.offer(buffer, read).forEach { frame ->
                                 delivered++
+                                framesDelivered.incrementAndGet()
                                 logFrame("rx", frame)
                                 trySend(frame)
                             }
@@ -325,6 +357,7 @@ class AapTransport(
 
             awaitClose {
                 ready.value = false
+                watchdog.cancel()
                 reader.cancel()
                 reassembler.reset()
                 runCatching { bluetoothSocket.close() }
@@ -480,6 +513,15 @@ class AapTransport(
          * as deliberate.
          */
         const val READ_BUFFER_BYTES = 4096
+
+        /**
+         * How long a newly opened channel may stay silent before it is treated as dead.
+         *
+         * The accessory answers the handshake with its whole configuration in well under
+         * a second. Generous against that, and short enough that a user toggling heart
+         * rate on does not sit watching a spinner.
+         */
+        const val SILENT_CHANNEL_TIMEOUT_MILLIS = 6_000L
 
         /**
          * How long a write waits for the channel. Generous, because opening it involves a

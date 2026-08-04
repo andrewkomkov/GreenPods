@@ -45,7 +45,13 @@ class HeartRateControllerTest {
     private class FakeCommands : HeartRateController.HeartRateCommands {
         val started = mutableListOf<Pair<Int, Int>>()
         val stopped = mutableListOf<Int>()
+        val describeRequests = mutableListOf<String>()
         var accept = true
+
+        override suspend fun describeServices(address: String): Boolean {
+            describeRequests += address
+            return true
+        }
 
         override suspend fun startHeartRate(
             address: String,
@@ -303,6 +309,66 @@ class HeartRateControllerTest {
             harness.sensing.lastStopReason shouldBe "noConvergence"
             // It must stop drawing the buds' battery to keep not getting a reading.
             harness.commands.stopped shouldBe listOf(serviceId)
+        }
+
+    @Test
+    fun `an accessory that has not described its sensor is asked, not waited for`() =
+        runTest {
+            // The bug behind "the toggle does nothing": the announcement carrying the
+            // service id is an answer, so a channel nobody asks on never produces one.
+            // Switching heart rate on over an already-open channel used to sit in
+            // STARTING until the timeout and then advise putting the buds in the case —
+            // which only ever worked because it forced a new channel someone did ask on.
+            val harness = Harness()
+            harness.start(this)
+
+            harness.commands.describeRequests.isNotEmpty() shouldBe true
+            harness.state.shouldBeInstanceOf<HeartRateState.Starting>()
+            // And nothing was started against a guessed id.
+            harness.commands.started.shouldBeEmpty()
+        }
+
+    @Test
+    fun `asking is rate-limited, not repeated on every pod emission`() =
+        runTest {
+            // Pod emissions arrive several times a second. An ask per emission would be
+            // a request storm on a channel that is already answering.
+            val harness = Harness()
+            harness.start(this)
+            val first = harness.commands.describeRequests.size
+
+            // Alternating so each one is a real emission — a StateFlow set to the value it
+            // already holds emits nothing, and a test that did that would pass by
+            // accident rather than by rate limiting.
+            repeat(6) { i ->
+                val secondary = if (i % 2 == 0) WearState.OUT_OF_EAR else WearState.IN_EAR
+                harness.wear(EarDetectionState(WearState.IN_EAR, secondary))
+            }
+
+            harness.commands.describeRequests.size shouldBe first
+
+            // Once the interval has passed it asks again, so a channel that came up late
+            // still gets a question.
+            harness.nowMillis += 4_000
+            harness.wear(EarDetectionState(WearState.IN_EAR, WearState.OUT_OF_EAR))
+
+            (harness.commands.describeRequests.size > first) shouldBe true
+        }
+
+    @Test
+    fun `once the services arrive the asking stops and the sensor starts`() =
+        runTest {
+            val harness = Harness()
+            harness.start(this)
+            val asksBefore = harness.commands.describeRequests.size
+
+            harness.describeServices()
+            harness.nowMillis += 4_000
+            harness.tick()
+
+            harness.commands.started.size shouldBe 1
+            // No further questions: it has its answer.
+            harness.commands.describeRequests.size shouldBe asksBefore
         }
 
     @Test

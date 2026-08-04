@@ -97,6 +97,20 @@ class HeartRateController(
             address: String,
             serviceId: Int,
         ): Boolean
+
+        /**
+         * Asks the accessory to describe its sensor services.
+         *
+         * The announcement carrying the heart-rate service id is an **answer**, not
+         * something the accessory volunteers — a channel nobody asks on never produces
+         * one. Waiting politely for it is what made switching heart rate on look like a
+         * hang whenever the channel happened to already be open: the session sat in
+         * `STARTING` until the timeout and then advised putting the buds back in the
+         * case, which worked only because that forced a new channel someone did ask on.
+         *
+         * Returns false when there is no channel to ask on, which is an ordinary outcome.
+         */
+        suspend fun describeServices(address: String): Boolean
     }
 
     private val sessions = mutableMapOf<String, Session>()
@@ -235,16 +249,39 @@ class HeartRateController(
             session.startedAtMillis = clock()
         }
 
-        // No service id yet means the accessory has not described itself on this channel.
-        // Waiting is the correct behaviour and not a failure: descriptors arrive
-        // unprompted, and there is no constant to fall back on (FR-002).
-        val serviceId = session.serviceId ?: return
+        // No service id yet means the accessory has not described itself on this channel
+        // — so ask it to. The announcement is an answer, not something it volunteers, and
+        // the previous version of this waited for one that was never coming: switching
+        // heart rate on over an already-open channel sat in `STARTING` until the timeout
+        // and then blamed the fit. Asking is idempotent and carries no setting, so the
+        // worst case of asking too often is a few bytes.
+        val serviceId = session.serviceId ?: return askForServices(pod, session)
 
         val intervalMicros = HidTransport.intervalMicros(latestSettings.heartRateIntervalMillis)
         session.requestedIntervalMicros = intervalMicros
         // running is set from the write being *sent*, not from the sensor being on. The
         // sensor is on when reports arrive, and only Measuring says that.
         session.running = commands.startHeartRate(pod.address, serviceId, intervalMicros)
+    }
+
+    /**
+     * Asks the accessory to describe its services, at most every [ASK_INTERVAL_MILLIS].
+     *
+     * Rate-limited rather than fired on every pod emission, which arrive several times a
+     * second: the request is cheap but not free, and a channel that is answering will do
+     * so long before the next ask. The tick keeps asking until either the announcement
+     * lands or the settle timeout gives up with `notDiscovered` — so a channel that came
+     * up before the user enabled the feature still gets asked, which is the case the old
+     * wait-and-hope version could never recover from.
+     */
+    private suspend fun askForServices(
+        pod: PodState,
+        session: Session,
+    ) {
+        val now = clock()
+        if (now - session.lastAskedAtMillis < ASK_INTERVAL_MILLIS) return
+        session.lastAskedAtMillis = now
+        commands.describeServices(pod.address)
     }
 
     private fun startGatt(
@@ -286,6 +323,9 @@ class HeartRateController(
         session.requestedIntervalMicros = HidTransport.INTERVAL_STOPPED_MICROS
         session.trustedThisSession = false
         session.lastStopReason = reason.token
+        // A new channel deserves an immediate ask rather than waiting out the interval
+        // left over from the previous one.
+        session.lastAskedAtMillis = 0L
         session.state =
             if (reason == StopReason.DISABLED) HeartRateState.Off else HeartRateState.Unavailable(reason.sentence)
 
@@ -435,6 +475,9 @@ class HeartRateController(
         var discardedImplausible: Int = 0
         var lastStopReason: String? = null
 
+        /** Rate-limits the "describe your services" request. See `askForServices`. */
+        var lastAskedAtMillis: Long = 0L
+
         fun sensing(): HeartRateSensing =
             HeartRateSensing(
                 enabled = enabled,
@@ -518,6 +561,14 @@ class HeartRateController(
          * provider which has stopped answering entirely cannot grow without bound.
          */
         private const val SINK_QUEUE_CAPACITY = 128
+
+        /**
+         * How often to re-ask an accessory that has not described its services.
+         *
+         * Pod emissions arrive several times a second; the answer, when it comes, comes
+         * within a second or two. Asking on that cadence would be noise.
+         */
+        private const val ASK_INTERVAL_MILLIS = 3_000L
 
         /** [io.github.andrewkomkov.greenpods.core.bluetooth.aap.HeartRateDecodeResult.Unhandled.Reason]. */
         private const val IMPLAUSIBLE_REASON = "IMPLAUSIBLE"

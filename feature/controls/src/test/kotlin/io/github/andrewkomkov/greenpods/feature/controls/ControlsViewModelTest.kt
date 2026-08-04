@@ -52,6 +52,9 @@ class ControlsViewModelTest {
     private class RecordingGateway(
         private val accepts: Boolean = true,
     ) : PodControlGateway {
+        /** The controls screen never asks for this; it exists on the shared gateway. */
+        override suspend fun describeServices(address: String): Boolean = true
+
         val writes = mutableListOf<String>()
 
         override suspend fun setNoiseControlMode(
