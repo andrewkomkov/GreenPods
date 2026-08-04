@@ -35,12 +35,38 @@ class PodMonitorService : LifecycleService() {
     private val app get() = GreenPodsApplication.instance
     private val lowBattery = LowBatteryNotifier()
 
+    /**
+     * Held here rather than in the container because it owns a registered receiver, and
+     * its lifetime is the service's: while GreenPods is doing continuous Bluetooth work
+     * is exactly when the channel is worth holding open.
+     */
+    private val channelKeeper by lazy {
+        AapChannelKeeper(
+            context = applicationContext,
+            gateway = app.controlGateway,
+            identity = app.podIdentity,
+            diagnostics = app.diagnostics,
+            scope = lifecycleScope,
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
         createChannels()
         startForeground(ONGOING_NOTIFICATION_ID, buildOngoingNotification("Scanning…"))
 
+        // Before anything else that might want the channel: the accessory's sensor
+        // announcement happens once per connection and cannot be asked for again, so the
+        // channel has to be open when the link comes up rather than when a write needs it.
+        channelKeeper.start()
+
         lifecycleScope.launch { app.earDetectionController.run() }
+
+        // Sensing lives with the channel. The heart-rate session runs here rather than in
+        // the Activity because it must survive the screen going off — and because Android
+        // requires a foreground service for continuous Bluetooth work anyway, so one
+        // notification satisfies FR-013 and the platform at once (AD-8, R-8).
+        lifecycleScope.launch { app.heartRateController.run() }
 
         lifecycleScope.launch {
             combine(app.podRepository.pods, app.settingsRepository.settings) { pods, settings ->
@@ -49,9 +75,24 @@ class PodMonitorService : LifecycleService() {
                 val nearest = pods.firstOrNull()
                 updateOngoingNotification(
                     when {
-                        nearest == null -> "No AirPods nearby"
-                        nearest.battery.lowestBudPercent == null -> nearest.name
-                        else -> "${nearest.name} · ${nearest.battery.lowestBudPercent}%"
+                        nearest == null -> {
+                            "No AirPods nearby"
+                        }
+
+                        // FR-013: active sensing is discoverable without opening the app.
+                        // It comes first because it is the thing the user most needs to
+                        // know is running — it draws the accessory's battery.
+                        nearest.heartRateSensing.enabled && nearest.heartRate.isSensing -> {
+                            getString(R.string.monitor_notification_heart_rate, nearest.name)
+                        }
+
+                        nearest.battery.lowestBudPercent == null -> {
+                            nearest.name
+                        }
+
+                        else -> {
+                            "${nearest.name} · ${nearest.battery.lowestBudPercent}%"
+                        }
                     },
                 )
                 pods.forEach { pod ->
@@ -68,6 +109,13 @@ class PodMonitorService : LifecycleService() {
     ): Int {
         super.onStartCommand(intent, flags, startId)
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        // The receiver outlives the coroutine scope unless it is unregistered by hand,
+        // and a leaked one keeps opening channels for a service that is gone.
+        channelKeeper.stop()
+        super.onDestroy()
     }
 
     private fun createChannels() {

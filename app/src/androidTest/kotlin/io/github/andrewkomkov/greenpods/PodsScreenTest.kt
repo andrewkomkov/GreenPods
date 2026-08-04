@@ -34,10 +34,15 @@ class PodsScreenTest {
     private fun show(
         state: PodsUiState,
         onRequestPermission: () -> Unit = {},
+        onRetryScan: () -> Unit = {},
     ) {
         compose.setContent {
             GreenPodsTheme(dynamicColor = false) {
-                PodsScreen(state = state, onRequestPermission = onRequestPermission)
+                PodsScreen(
+                    state = state,
+                    onRequestPermission = onRequestPermission,
+                    onRetryScan = onRetryScan,
+                )
             }
         }
     }
@@ -46,17 +51,23 @@ class PodsScreenTest {
     fun searchingExplainsWhatTheAppIsDoing() {
         show(PodsUiState(emptyReason = PodsEmptyReason.SEARCHING))
 
-        compose.onNodeWithText("Looking for nearby AirPods…").assertIsDisplayed()
+        compose.onNodeWithText("Looking for your AirPods…").assertIsDisplayed()
         compose.onNode(hasText("Open the case", substring = true)).assertIsDisplayed()
     }
 
     @Test
     fun missingPermissionOffersAWayToGrantIt() {
+        // Named, not trailing: `show` has more than one callback now, and a trailing
+        // lambda binds to the last parameter — which is how this test spent a run
+        // asserting that the retry handler grants permissions.
         var requested = false
-        show(PodsUiState(emptyReason = PodsEmptyReason.NO_PERMISSION)) { requested = true }
+        show(
+            PodsUiState(emptyReason = PodsEmptyReason.NO_PERMISSION),
+            onRequestPermission = { requested = true },
+        )
 
-        compose.onNodeWithText("Nearby-devices permission needed").assertIsDisplayed()
-        compose.onNodeWithText("Grant permission").performClick()
+        compose.onNodeWithText("GreenPods needs to see nearby devices").assertIsDisplayed()
+        compose.onNodeWithText("Allow").performClick()
 
         assert(requested) { "The empty state must actually request the permission" }
     }
@@ -67,20 +78,30 @@ class PodsScreenTest {
 
         compose.onNodeWithText("Bluetooth is off").assertIsDisplayed()
         // The two causes need two different instructions: nothing to grant here.
-        compose.onNodeWithText("Grant permission").assertDoesNotExist()
+        compose.onNodeWithText("Allow").assertDoesNotExist()
+        compose.onNodeWithText("Open Bluetooth settings").assertIsDisplayed()
     }
 
     @Test
-    fun aScanFailureShowsTheRadiosOwnReason() {
+    fun aScanFailureOffersTheOneThingThatRecoversIt() {
+        // Not the radio's own error text. `BLE scan failed: 2` is a true sentence about a
+        // Bluetooth stack and a useless one about a phone in someone's hand — and the
+        // recovery is the same whichever code came back. The code is kept in the
+        // diagnostics log, where whoever can act on it will look.
+        var retried = false
         show(
             PodsUiState(
                 emptyReason = PodsEmptyReason.SCAN_FAILED,
                 scanFailure = "BLE scan failed: 2",
             ),
+            onRetryScan = { retried = true },
         )
 
-        compose.onNodeWithText("Scanning stopped").assertIsDisplayed()
-        compose.onNodeWithText("BLE scan failed: 2").assertIsDisplayed()
+        compose.onNodeWithText("GreenPods stopped listening").assertIsDisplayed()
+        compose.onNodeWithText("BLE scan failed: 2").assertDoesNotExist()
+        compose.onNodeWithText("Try again").performClick()
+
+        assert(retried) { "The empty state must actually restart the scan" }
     }
 
     @Test
@@ -113,8 +134,10 @@ class PodsScreenTest {
         // An unknown level must never be rendered as 0 %.
         compose.onNodeWithText("—").assertIsDisplayed()
 
-        // The locked capability is present, and tapping it explains itself.
+        // The locked capability is present, and tapping it explains itself — as a fact
+        // about the phone, not as the Bluetooth layer's account of what it was refused.
         compose.onNodeWithText("Noise control").performClick()
-        compose.onNode(hasText("refused the channel mode", substring = true)).assertIsDisplayed()
+        compose.onNode(hasText("won't let GreenPods send commands", substring = true)).assertIsDisplayed()
+        compose.onNode(hasText("channel mode", substring = true)).assertDoesNotExist()
     }
 }

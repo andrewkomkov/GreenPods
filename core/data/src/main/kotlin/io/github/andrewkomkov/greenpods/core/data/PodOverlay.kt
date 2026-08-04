@@ -3,7 +3,8 @@ package io.github.andrewkomkov.greenpods.core.data
 import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapEvent
 import io.github.andrewkomkov.greenpods.core.model.BatteryState
 import io.github.andrewkomkov.greenpods.core.model.EarDetectionState
-import io.github.andrewkomkov.greenpods.core.model.HeartRateSample
+import io.github.andrewkomkov.greenpods.core.model.HeartRateSensing
+import io.github.andrewkomkov.greenpods.core.model.HeartRateState
 import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 import io.github.andrewkomkov.greenpods.core.model.PodState
 
@@ -23,7 +24,12 @@ data class PodOverlay(
     val noiseControlMode: NoiseControlMode? = null,
     val conversationalAwarenessEnabled: Boolean? = null,
     val adaptiveNoiseStrength: Int? = null,
-    val heartRate: HeartRateSample? = null,
+    /**
+     * What the heart-rate session published, if one is running. The transport gate is
+     * applied later, by [PodState.heartRate] — this is only what was measured.
+     */
+    val heartRate: HeartRateState? = null,
+    val heartRateSensing: HeartRateSensing? = null,
     /**
      * AAP reports battery to the percent; the advertisement only in steps of ten. When
      * the channel is open its reading wins, which is why battery is part of the overlay
@@ -58,7 +64,8 @@ data class PodOverlay(
             noiseControlMode = noiseControlMode ?: pod.noiseControlMode,
             conversationalAwarenessEnabled = conversationalAwarenessEnabled ?: pod.conversationalAwarenessEnabled,
             adaptiveNoiseStrength = adaptiveNoiseStrength ?: pod.adaptiveNoiseStrength,
-            heartRate = heartRate ?: pod.heartRate,
+            heartRateSession = heartRate ?: pod.heartRateSession,
+            heartRateSensing = heartRateSensing ?: pod.heartRateSensing,
             battery = battery ?: pod.battery,
             earDetection = earDetection ?: pod.earDetection,
         )

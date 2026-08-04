@@ -122,7 +122,11 @@ enum class PodFeature {
     VOLUME_SWIPE,
     HEARING_AID,
 
-    /** Heart rate over AAP control command 0x30. Requires the L2CAP transport. */
+    /**
+     * Heart rate as a HID sensor report over AAP opcode 0x17. Requires the L2CAP
+     * transport. The sensor's service id is discovered from the accessory's own
+     * descriptors, never assumed — see `docs/protocol-research.md`.
+     */
     HEART_RATE_AAP,
 
     /** Heart rate over the standard BLE Heart Rate Profile (0x180D). Works unrooted. */
@@ -141,30 +145,44 @@ enum class PodFeature {
     /**
      * Whether GreenPods can actually *do* this feature once its transport is live.
      *
-     * A transport being open is necessary but not sufficient: the heart-rate sensor on
-     * AirPods Pro 3 can be switched on over the Apple protocol, but its measurement
-     * frame has never been publicly decoded, so there is no number to show. Reporting
-     * that as usable would be a promise the app cannot keep — see
-     * `docs/protocol-research.md`.
+     * A transport being open is necessary but not sufficient. Every feature listed here
+     * currently clears both bars; the property stays because the moment a model is added
+     * with a capability GreenPods can see but not use, reporting it as usable would be a
+     * promise the app cannot keep.
      */
     val isImplemented: Boolean
-        get() = this != HEART_RATE_AAP
+        get() = true
 
     /** Human label. Enum names must never reach the screen. */
     val displayName: String
         get() =
             when (this) {
                 EAR_DETECTION -> "Ear detection"
+
                 NOISE_CONTROL -> "Noise control"
+
                 ADAPTIVE_AUDIO -> "Adaptive audio"
+
                 CONVERSATIONAL_AWARENESS -> "Conversational awareness"
+
                 SPATIAL_AUDIO -> "Spatial audio"
+
                 HEAD_TRACKING -> "Head tracking"
+
                 EAR_TIP_FIT_TEST -> "Ear tip fit test"
+
                 CASE_SPEAKER -> "Case speaker"
+
                 VOLUME_SWIPE -> "Volume swipe"
+
                 HEARING_AID -> "Hearing aid"
-                HEART_RATE_AAP -> "Heart rate (Apple protocol)"
+
+                // Both routes are called what they are. Which one carried a given
+                // reading is a difference the *card* states, in terms of whether the
+                // earbuds grade their own readings — never by putting a protocol's name
+                // on screen, which is the one thing the product UI may not do.
+                HEART_RATE_AAP -> "Heart rate"
+
                 HEART_RATE_GATT -> "Heart rate"
             }
 
@@ -213,8 +231,8 @@ enum class PodFeature {
                 }
 
                 HEART_RATE_AAP -> {
-                    "The sensor can be switched on over Apple's protocol, but the " +
-                        "measurement frame is not publicly decoded — so no number is shown."
+                    "Reads the optical sensor over Apple's protocol — no workout and " +
+                        "no Apple device needed."
                 }
 
                 HEART_RATE_GATT -> {
@@ -257,5 +275,30 @@ enum class Transport {
                 BLE_ADVERTISEMENT -> "Bluetooth advertisement"
                 GATT -> "Bluetooth GATT"
                 AAP_L2CAP -> "Apple protocol (L2CAP)"
+            }
+
+    /**
+     * What a locked feature is allowed to say on a product screen.
+     *
+     * The precise reason a transport failed — a refused PSM, a blocked reflective call —
+     * is real and worth keeping, and [TransportStatus.reason] keeps it for the diagnostics
+     * log and for adb. It is not, however, something a person who wanted to see their
+     * battery level should have to read. This is the same fact stated as a property of
+     * their phone, which is the only part of it they can act on.
+     */
+    val lockSentence: String
+        get() =
+            when (this) {
+                BLE_ADVERTISEMENT -> {
+                    "Every phone can hear what AirPods broadcast, so this always works."
+                }
+
+                GATT -> {
+                    "This phone can't reach the sensor in your earbuds."
+                }
+
+                AAP_L2CAP -> {
+                    "This phone won't let GreenPods send commands to your earbuds."
+                }
             }
 }

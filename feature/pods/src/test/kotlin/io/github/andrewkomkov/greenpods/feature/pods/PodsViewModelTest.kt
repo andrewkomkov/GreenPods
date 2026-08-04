@@ -157,4 +157,23 @@ class PodsViewModelTest {
                 cancelAndIgnoreRemainingEvents()
             }
         }
+
+    @Test
+    fun `a model with no sensor gets an unsupported heart-rate card rather than none`() =
+        runTest(dispatcher) {
+            val viewModel =
+                PodsViewModel(repository(flow { emit(sighting()) }), MutableStateFlow(Environment.Unknown))
+
+            viewModel.state.test {
+                var state = awaitItem()
+                while (state.isEmpty) state = awaitItem()
+
+                // AirPods Pro 2 has no heart-rate sensor of either kind. Principle II:
+                // the card is present and says so, because a missing card reads as a bug.
+                val card = state.heartRates.getValue("AA:BB:CC:DD:EE:FF")
+                card.kind shouldBe HeartRateUi.Kind.UNSUPPORTED
+                card.beatsPerMinute shouldBe null
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
 }

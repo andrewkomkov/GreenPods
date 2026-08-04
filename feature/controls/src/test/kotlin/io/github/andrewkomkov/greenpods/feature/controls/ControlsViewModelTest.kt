@@ -52,6 +52,9 @@ class ControlsViewModelTest {
     private class RecordingGateway(
         private val accepts: Boolean = true,
     ) : PodControlGateway {
+        /** The controls screen never asks for this; it exists on the shared gateway. */
+        override suspend fun describeServices(address: String): Boolean = true
+
         val writes = mutableListOf<String>()
 
         override suspend fun setNoiseControlMode(
@@ -83,6 +86,40 @@ class ControlsViewModelTest {
             modes: Set<NoiseControlMode>,
         ): Boolean {
             writes += "cycle=${modes.map { it.name }.sorted()}"
+            return accepts
+        }
+
+        override suspend fun startHeartRate(
+            address: String,
+            serviceId: Int,
+            intervalMicros: Int,
+        ): Boolean {
+            writes += "hrStart=$serviceId@$intervalMicros"
+            return accepts
+        }
+
+        override suspend fun startHeadTracking(
+            address: String,
+            serviceId: Int,
+            intervalMicros: Int,
+        ): Boolean {
+            writes += "headStart=$serviceId@$intervalMicros"
+            return accepts
+        }
+
+        override suspend fun stopHeadTracking(
+            address: String,
+            serviceId: Int,
+        ): Boolean {
+            writes += "headStop=$serviceId"
+            return accepts
+        }
+
+        override suspend fun stopHeartRate(
+            address: String,
+            serviceId: Int,
+        ): Boolean {
+            writes += "hrStop=$serviceId"
             return accepts
         }
     }
@@ -173,9 +210,17 @@ class ControlsViewModelTest {
 
                 viewModel.probe()
                 advanceUntilIdle()
-                while (!state.gateReason.contains("channel mode")) state = awaitItem()
+                while (!state.gateReason.contains("won't let")) state = awaitItem()
 
                 state.controlAvailable shouldBe false
+                // The stack's own account — a refused channel mode, a rejected PSM — is
+                // kept, in the diagnostics log, for whoever can act on it. What reaches
+                // the screen is the part the reader can act on plus the part that stops
+                // them concluding their earbuds are broken.
+                state.gateReason shouldContain "unaffected"
+                listOf("L2CAP", "PSM", "channel", "socket").forEach { jargon ->
+                    state.gateReason.contains(jargon, ignoreCase = true) shouldBe false
+                }
                 cancelAndIgnoreRemainingEvents()
             }
         }

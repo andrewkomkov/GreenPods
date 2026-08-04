@@ -1,39 +1,42 @@
 package io.github.andrewkomkov.greenpods.core.designsystem.theme
 
 import androidx.compose.animation.core.FiniteAnimationSpec
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 
 /**
- * Material 3 Expressive motion tokens, defined locally.
+ * Material 3 Expressive motion, read from the theme.
  *
- * Expressive motion replaces duration-and-easing with springs, so components
- * overshoot and settle instead of stopping dead. `MotionScheme` — the API that
- * normally carries these — is still `internal` in material3 1.4.0 and only becomes
- * public in 1.5.0-alpha, so the tokens are reproduced here rather than pinning the
- * whole app to an alpha dependency.
+ * These used to be hand-written springs, because `MotionScheme` was `internal` in
+ * material3 1.4.0 and the values had to be reproduced from the spec by hand. On
+ * 1.5.0-alpha the real scheme is public, so this is now a thin alias over
+ * `MaterialTheme.motionScheme` — call sites keep their names, and the numbers come from
+ * the design system rather than from a comment claiming to match it.
  *
- * Swap this file for `MaterialTheme.motionScheme` once 1.5.0 is stable; the spring
- * values are chosen to match, so behaviour should not visibly change.
- *
- * **Spatial** springs move things and are deliberately under-damped — the bounce is
- * the point. **Effects** springs handle colour and alpha, where overshoot would look
- * like a glitch, so they are critically damped.
+ * The distinction the scheme draws is worth keeping in mind at the call site.
+ * **Spatial** springs move things and are under-damped; the overshoot is the point.
+ * **Effects** springs carry colour and alpha, where an overshoot would read as a glitch,
+ * so they do not bounce.
  */
 object GreenPodsMotion {
     /** Quick reactions: a button responding to a press. */
-    fun <T> fastSpatial(): FiniteAnimationSpec<T> =
-        spring(dampingRatio = 0.6f, stiffness = 800f)
+    @Composable
+    @ReadOnlyComposable
+    fun <T> fastSpatial(): FiniteAnimationSpec<T> = MaterialTheme.motionScheme.fastSpatialSpec()
 
     /** The default for most movement. */
-    fun <T> defaultSpatial(): FiniteAnimationSpec<T> =
-        spring(dampingRatio = 0.8f, stiffness = 380f)
+    @Composable
+    @ReadOnlyComposable
+    fun <T> defaultSpatial(): FiniteAnimationSpec<T> = MaterialTheme.motionScheme.defaultSpatialSpec()
 
     /** Large or playful movement that should feel weighty. */
-    fun <T> slowSpatial(): FiniteAnimationSpec<T> =
-        spring(dampingRatio = 0.8f, stiffness = 200f)
+    @Composable
+    @ReadOnlyComposable
+    fun <T> slowSpatial(): FiniteAnimationSpec<T> = MaterialTheme.motionScheme.slowSpatialSpec()
 
     /** Colour, alpha and other non-spatial changes — no overshoot. */
-    fun <T> effects(): FiniteAnimationSpec<T> =
-        spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+    @Composable
+    @ReadOnlyComposable
+    fun <T> effects(): FiniteAnimationSpec<T> = MaterialTheme.motionScheme.defaultEffectsSpec()
 }

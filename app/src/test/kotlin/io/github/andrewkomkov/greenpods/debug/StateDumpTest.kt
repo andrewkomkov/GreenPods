@@ -6,6 +6,9 @@ import io.github.andrewkomkov.greenpods.core.model.BatteryComponent
 import io.github.andrewkomkov.greenpods.core.model.BatteryState
 import io.github.andrewkomkov.greenpods.core.model.ChargeStatus
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
+import io.github.andrewkomkov.greenpods.core.model.HeartRateReading
+import io.github.andrewkomkov.greenpods.core.model.HeartRateSensing
+import io.github.andrewkomkov.greenpods.core.model.HeartRateState
 import io.github.andrewkomkov.greenpods.core.model.PodModel
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.Transport
@@ -108,6 +111,50 @@ class StateDumpTest {
         json shouldContain "04 00\\n09 1F"
         // A raw newline would break the one-line-per-dump contract adb relies on.
         json shouldNotContain "04 00\n09"
+    }
+
+    @Test
+    fun `a measuring pod puts its state in the dump and its heart rate nowhere`() {
+        // The field this replaced printed BPM outright, which put a heart rate into
+        // every bug report anyone pasted. FR-023 and SC-005 are checked here because
+        // the dump is the one output the project asks people to send in.
+        val measuring =
+            pod.copy(
+                model = PodModel.AIRPODS_PRO_3,
+                activeTransports = setOf(Transport.BLE_ADVERTISEMENT, Transport.AAP_L2CAP),
+                transportStatuses =
+                    listOf(
+                        TransportStatus.AdvertisementAvailable,
+                        TransportStatus(Transport.AAP_L2CAP, TransportAvailability.AVAILABLE, "Channel open."),
+                    ),
+                heartRateSession =
+                    HeartRateState.Measuring(
+                        HeartRateReading(
+                            beatsPerMinute = 137,
+                            confidence = 233,
+                            source = HeartRateReading.Source.AAP,
+                            measuredAtEpochMillis = 1_770_000_000_000L,
+                        ),
+                    ),
+                heartRateSensing =
+                    HeartRateSensing(
+                        enabled = true,
+                        requestedIntervalMicros = 1_000_000,
+                        serviceId = 0x13,
+                        source = HeartRateReading.Source.AAP,
+                        reportsReceived = 63,
+                        trustedCount = 59,
+                    ),
+            )
+
+        val json = render(pods = listOf(measuring))
+
+        json shouldContain "\"state\":\"MEASURING\""
+        json shouldContain "\"trustedCount\":59"
+        json shouldContain "\"serviceId\":\"0x13\""
+        json shouldNotContain "137"
+        json shouldNotContain "heartRateBpm"
+        json shouldNotContain "233"
     }
 
     @Test

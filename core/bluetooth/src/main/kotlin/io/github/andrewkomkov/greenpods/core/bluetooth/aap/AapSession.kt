@@ -5,6 +5,8 @@ import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 import io.github.andrewkomkov.greenpods.core.model.StemLongPressAction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.onStart
 
 /**
  * A live AAP conversation with one accessory: raw bytes in, [AapEvent]s out, commands
@@ -21,9 +23,36 @@ import kotlinx.coroutines.flow.map
  */
 class AapSession(
     private val transport: AapTransport = AapTransport(),
+    /**
+     * One decoder per session, because the `0x17` channel is stateful: which service a
+     * HID report belongs to is only knowable from descriptors sent earlier on the same
+     * channel, and the heart-rate timestamp anchor must not outlive it.
+     */
+    private val decoder: AapDecoder = AapDecoder(),
 ) {
     /** Opens the channel and emits every decoded message until collection stops. */
-    fun events(device: BluetoothDevice): Flow<AapEvent> = transport.connect(device).map(AapDecoder::decode)
+    fun events(device: BluetoothDevice): Flow<AapEvent> =
+        transport
+            .connect(device)
+            .onStart { decoder.resetSession() }
+            .map(decoder::decode)
+            .onCompletion { decoder.resetSession() }
+
+    /**
+     * Seeds this session with what the accessory said about itself on an earlier link.
+     *
+     * See [AapDecoder.restoreServices]. A live announcement always wins.
+     */
+    fun restoreServices(remembered: List<HidService>) = decoder.restoreServices(remembered)
+
+    /** The services the accessory has described, live or remembered. */
+    val describedServices: List<HidService> get() = decoder.knownServices
+
+    /** The heart-rate service id the accessory announced, or null before it has. */
+    val heartRateServiceId: Int? get() = decoder.discoveredHeartRateServiceId
+
+    /** True once a heart-rate service with a gateable confidence field has been described. */
+    val canMeasureHeartRate: Boolean get() = decoder.canMeasureHeartRate
 
     /**
      * Suspends until the channel is writable.
@@ -33,6 +62,28 @@ class AapSession(
      * does not exist yet. Callers wait on this first.
      */
     suspend fun awaitReady(): Boolean = transport.awaitReady()
+
+    /**
+     * Waits a caller-chosen time for the channel to carry traffic.
+     *
+     * The default is sized for "a user pressed a button and can wait". A caller racing
+     * the accessory's one-shot service announcement needs a much shorter answer so it can
+     * try again while the window is still open.
+     */
+    suspend fun awaitReady(timeoutMillis: Long): Boolean = transport.awaitReady(timeoutMillis)
+
+    /**
+     * Asks the accessory, again, to tell the host what it has.
+     *
+     * The same request goes out with the handshake, and on a channel opened the instant
+     * the Bluetooth link comes up that is demonstrably too early: the accessory answers
+     * with its whole configuration and says nothing about its HID services. Asking a
+     * second time, once the channel has settled, is what makes it announce them — and
+     * that announcement is the only way the heart-rate service id is ever learned.
+     *
+     * A request, not a change: it writes no setting and moves nothing in the accessory.
+     */
+    suspend fun requestNotifications(): Boolean = transport.send(AapProtocol.REQUEST_NOTIFICATIONS)
 
     /**
      * Writes a packet built elsewhere.
@@ -72,5 +123,62 @@ class AapSession(
     suspend fun setListeningModeCycle(modes: Set<NoiseControlMode>): Boolean {
         val packet = AapCommands.listeningModeCycle(modes) ?: return false
         return transport.send(packet)
+    }
+
+    /**
+     * Asks the heart-rate service to report every [intervalMicros] microseconds.
+     *
+     * Returns false, without writing, when the accessory has not yet described a feature
+     * report to write the interval into. That is not a defensive check — it is FR-002:
+     * there is no constant to fall back on here, and inventing one is the bug this
+     * project already watched LibrePods ship with head tracking's `0x0E`.
+     *
+     * Waits for the channel first. [events] is a cold flow, so the socket does not exist
+     * until something collects it, and a command sent before then is silently dropped.
+     */
+    suspend fun startHeartRate(
+        serviceId: Int,
+        intervalMicros: Int,
+    ): Boolean {
+        val featureReportId = decoder.heartRateFeatureReportId ?: return false
+        if (!awaitReady()) return false
+        return transport.send(HidTransport.setReportInterval(serviceId, featureReportId, intervalMicros))
+    }
+
+    /**
+     * Stops the sensor in the accessory — interval zero.
+     *
+     * This is the difference between FR-014 being satisfied and being faked. A UI that
+     * stops showing a number while the optical sensor keeps drawing the buds' battery
+     * looks identical and is not the same thing.
+     */
+    suspend fun stopHeartRate(serviceId: Int): Boolean {
+        val featureReportId = decoder.heartRateFeatureReportId ?: return false
+        if (!awaitReady()) return false
+        return transport.send(HidTransport.stopReportStream(serviceId, featureReportId))
+    }
+
+    /**
+     * Asks the head-tracking service to report every [intervalMicros] microseconds.
+     *
+     * Mechanically identical to the heart-rate stream — opcode 0x17 is a HID transport
+     * carrying several services, and starting any of them is a report-interval feature
+     * report — but it is written out rather than shared, because the two are allowed to
+     * diverge and a single "start whatever" would hide it when they do.
+     */
+    suspend fun startHeadTracking(
+        serviceId: Int,
+        intervalMicros: Int,
+    ): Boolean {
+        val featureReportId = decoder.headTrackingFeatureReportId ?: return false
+        if (!awaitReady()) return false
+        return transport.send(HidTransport.setReportInterval(serviceId, featureReportId, intervalMicros))
+    }
+
+    /** Stops it — interval zero, so the buds stop sensing rather than the app stop reading. */
+    suspend fun stopHeadTracking(serviceId: Int): Boolean {
+        val featureReportId = decoder.headTrackingFeatureReportId ?: return false
+        if (!awaitReady()) return false
+        return transport.send(HidTransport.stopReportStream(serviceId, featureReportId))
     }
 }

@@ -184,7 +184,68 @@ gp --es cmd set --es key lowBatteryThreshold --es value 30
 ```
 
 Keys: `autoPause`, `autoResume`, `pauseOnlyWhenBothOut`, `backgroundMonitoring`,
-`lowBatteryWarning`, `lowBatteryThreshold`, `headGestures`, `scanMode`.
+`lowBatteryWarning`, `lowBatteryThreshold`, `headGestures`, `scanMode`,
+`hrIntervalMs`, `hrConfidenceThreshold`, `hrHealthConnect`.
+
+## Heart rate
+
+```bash
+gp --es cmd hr --es value on       # enables sensing, and starts the monitoring service
+gp --es cmd hr --es value status
+gp --es cmd hr --es value off      # sends interval 0 — the sensor stops in the earbuds
+```
+
+`hr status` prints one line and **no values**:
+
+```
+hr: state=MEASURING enabled=true source=AAP service=0x13 interval=1000ms \
+    reports=63 trusted=59 discarded=0 lastStop=none
+```
+
+`state` is the gated state, so it reads `UNSUPPORTED` on a model with no sensor and
+`LOCKED` where this phone cannot open the Apple protocol channel — two different
+situations that must never be shown as one.
+
+The confidence threshold ships **provisional** (128), bounded only between 21 and 156 by
+the one capture in hand. Calibrating it is a measurement, not a rebuild:
+
+```bash
+gp --es cmd set --es key hrConfidenceThreshold --es value 100
+gp --es cmd set --es key hrIntervalMs --es value 2000     # for battery measurement
+```
+
+To watch the frames themselves, including the start and stop writes:
+
+```bash
+adb shell setprop log.tag.AapTransport DEBUG
+adb logcat -d -s AapTransport | grep "tx" | grep " 17 00 "
+```
+
+Heart-rate **report bodies are excluded from that log**; everything else on the channel
+is not, and it still carries serial numbers and the accessory's whole configuration.
+
+## Health Connect
+
+```bash
+gp --es cmd set --es key hrHealthConnect --es value on
+gp --es cmd health --es value status
+gp --es cmd health --es value count --el minutes 10
+gp --es cmd health --es value clear
+```
+
+`count` prints counts, never samples, and filters on GreenPods' own `DataOrigin` —
+counting everything in the window would report another app's chest strap as our output:
+
+```
+health: own records in last 10m: 10 records, 59 samples
+```
+
+`trusted=59` from `hr status` against `59 samples` here is SC-009, checked in two
+commands.
+
+**No command prints a heart rate.** Not `hr status`, not `dump`, not a diagnostic
+detail. `dump` carries a `heartRate` object holding the state and the counters — the
+old `heartRateBpm` field is gone.
 
 ## Monitoring service
 
@@ -192,6 +253,21 @@ Keys: `autoPause`, `autoResume`, `pauseOnlyWhenBothOut`, `backgroundMonitoring`,
 gp --es cmd monitor --es value on
 adb shell dumpsys activity services $PKG | grep -E "isForeground|foregroundServiceType"
 gp --es cmd monitor --es value off
+```
+
+Enabling heart rate starts this service, because sensing lives with the channel. The
+ongoing notification is how "the sensor is running" is discoverable — but **where
+`POST_NOTIFICATIONS` is denied the service still runs and the notification is simply
+absent.** Nothing is silently sensing that the app did not disclose; the disclosure is
+just no longer on screen, which is why the settings copy states it too. To check that
+case deliberately:
+
+```bash
+adb shell pm revoke $PKG android.permission.POST_NOTIFICATIONS
+gp --es cmd hr --es value on
+gp --es cmd hr --es value status      # still reports state=SETTLING|MEASURING
+adb shell dumpsys activity services $PKG | grep isForeground   # still true
+adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
 ```
 
 ## Diagnostics

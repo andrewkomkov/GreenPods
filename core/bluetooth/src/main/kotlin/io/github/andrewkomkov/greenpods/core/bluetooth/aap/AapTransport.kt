@@ -11,6 +11,7 @@ import androidx.annotation.RequiresApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.callbackFlow
@@ -69,6 +70,106 @@ sealed interface AapAvailability {
     ) : AapAvailability
 
     val isAvailable: Boolean get() = this is Available
+}
+
+/**
+ * Turns whatever a socket read happened to return into whole AAP frames.
+ *
+ * `read()` returns bytes, not messages. Until this existed the transport emitted one
+ * packet per read and hoped they lined up — which they did, right up to the point where
+ * they would not: the 2026-08-04 capture saw a 996-byte descriptor frame against a
+ * 1024-byte buffer, so one extra service on some future model splits a frame and every
+ * decoder downstream silently misparses it. Nothing throws in that world; the numbers
+ * are just wrong.
+ *
+ * Only opcode `0x17` declares its own length — a 16-bit little-endian count at offset 10
+ * covering the protobuf body, so a whole frame is `12 + length` bytes. Every other opcode
+ * carries no length at all, so for those this does what the transport always did and
+ * emits what arrived. Guessing at boundaries for them by hunting for the next header
+ * would split a payload that happened to contain `04 00 04 00`, which is a worse failure
+ * than the one being fixed.
+ *
+ * Pure and stateful-by-instance, so the interesting cases — a frame in two halves, two
+ * frames in one read, a length that could not possibly be right — are unit-testable
+ * without a socket.
+ */
+internal class AapFrameReassembler(
+    /**
+     * Beyond this a declared length is not a long frame, it is a misparse. Surfacing the
+     * bytes is then better than buffering forever waiting for a frame that will never
+     * complete.
+     */
+    private val maxFrameBytes: Int = MAX_FRAME_BYTES,
+) {
+    private var pending: ByteArray = ByteArray(0)
+
+    /** Feeds [length] bytes from [chunk] in, and returns every whole frame now available. */
+    fun offer(
+        chunk: ByteArray,
+        length: Int = chunk.size,
+    ): List<ByteArray> {
+        pending = if (pending.isEmpty()) chunk.copyOf(length) else pending + chunk.copyOf(length)
+
+        val frames = mutableListOf<ByteArray>()
+        while (true) {
+            val frame = takeFrame() ?: break
+            frames += frame
+        }
+        return frames
+    }
+
+    /** Drops anything half-received. Called when the channel goes away. */
+    fun reset() {
+        pending = ByteArray(0)
+    }
+
+    /** Whatever is buffered and not yet a whole frame. Only interesting to tests. */
+    val bufferedBytes: Int get() = pending.size
+
+    private fun takeFrame(): ByteArray? {
+        if (pending.size < OPCODE_END) return null
+
+        // Not our framing at all. Hand it on rather than dropping it — it becomes
+        // AapEvent.Unknown, which is where unrecognised traffic belongs (Principle IV).
+        if (!pending.copyOfRange(0, 4).contentEquals(AapProtocol.HEADER)) return drain()
+
+        val opcode = (pending[4].toInt() and 0xFF) or ((pending[5].toInt() and 0xFF) shl 8)
+        if (opcode != Opcode.HEAD_TRACKING.value) return drain()
+
+        if (pending.size < BODY_OFFSET) return null
+        val declared =
+            (pending[LENGTH_OFFSET].toInt() and 0xFF) or ((pending[LENGTH_OFFSET + 1].toInt() and 0xFF) shl 8)
+        val total = BODY_OFFSET + declared
+        if (total > maxFrameBytes) return drain()
+        if (pending.size < total) return null
+
+        val frame = pending.copyOfRange(0, total)
+        pending = pending.copyOfRange(total, pending.size)
+        return frame
+    }
+
+    private fun drain(): ByteArray? {
+        if (pending.isEmpty()) return null
+        val all = pending
+        pending = ByteArray(0)
+        return all
+    }
+
+    private companion object {
+        const val OPCODE_END = 6
+
+        /** Header, opcode and the 4-byte `00 00 10 00` prefix. */
+        const val LENGTH_OFFSET = 10
+        const val BODY_OFFSET = 12
+
+        /**
+         * The declared length is 16 bits, so 65 535 is expressible — but the largest frame
+         * ever observed was 996 bytes and the largest single report the accessory declares
+         * is 601. Eight kilobytes is generous by an order of magnitude and still small
+         * enough that a misparse is caught in one read rather than buffered.
+         */
+        const val MAX_FRAME_BYTES = 8_192
+    }
 }
 
 /**
@@ -184,26 +285,81 @@ class AapTransport(
             output.flush()
             ready.value = true
 
+            val reassembler = AapFrameReassembler()
+            val framesDelivered =
+                java.util.concurrent.atomic
+                    .AtomicInteger(0)
+
+            // A channel that opens and then says nothing is dead, and it does not
+            // announce itself as dead: the socket stays open, writes are accepted, and
+            // reads simply never return anything. Seen twice on hardware — once with a
+            // second app holding the channel, once after a blocked write left the
+            // accessory's end wedged — and both times it looked exactly like a working
+            // channel with a quiet accessory.
+            //
+            // There is no such thing as a quiet accessory here. The handshake is answered
+            // with the whole configuration within a second, every time. So silence past
+            // this point is a diagnosis, and failing fast lets the caller reopen instead
+            // of leaving the user to reconnect the earbuds by hand.
+            val watchdog =
+                CoroutineScope(ioDispatcher).launch {
+                    delay(SILENT_CHANNEL_TIMEOUT_MILLIS)
+                    if (framesDelivered.get() == 0) {
+                        Log.w(TAG, "AAP channel opened but delivered nothing; closing it")
+                        close(
+                            IOException(
+                                "The Apple protocol channel opened but the accessory sent nothing. " +
+                                    "Another app may be holding the channel, or it needs reconnecting.",
+                            ),
+                        )
+                        runCatching { bluetoothSocket.close() }
+                    }
+                }
+
             val reader =
                 CoroutineScope(ioDispatcher).launch {
                     val buffer = ByteArray(READ_BUFFER_BYTES)
+                    var delivered = 0
+                    var failure: Throwable? = null
                     try {
                         while (true) {
                             val read = bluetoothSocket.inputStream.read(buffer)
                             if (read <= 0) break
-                            val packet = buffer.copyOf(read)
-                            logFrame("rx", packet)
-                            trySend(packet)
+                            reassembler.offer(buffer, read).forEach { frame ->
+                                delivered++
+                                framesDelivered.incrementAndGet()
+                                logFrame("rx", frame)
+                                trySend(frame)
+                            }
                         }
                     } catch (e: IOException) {
                         Log.d(TAG, "AAP channel closed: ${e.message}")
                     }
-                    close()
+                    // A channel that connected, accepted the handshake and then ended
+                    // without ever delivering a frame is not an accessory with nothing to
+                    // say — on this transport it is very nearly always **another app
+                    // already holding PSM 0x1001**. Only one client may, and the loser
+                    // gets exactly this: a successful connect, writes that do not throw,
+                    // and a silent EOF a few seconds later. Reported as a distinct cause
+                    // because the alternative is a channel that looks like it is working
+                    // while nothing will ever arrive on it (Principle II).
+                    if (delivered == 0) {
+                        failure =
+                            IOException(
+                                "The Apple protocol channel opened but the accessory sent nothing before " +
+                                    "closing it. Another app is most likely holding the channel — only one " +
+                                    "may at a time.",
+                            )
+                        Log.w(TAG, "AAP channel delivered no frames; suspecting another client")
+                    }
+                    close(failure)
                 }
 
             awaitClose {
                 ready.value = false
+                watchdog.cancel()
                 reader.cancel()
+                reassembler.reset()
                 runCatching { bluetoothSocket.close() }
                 socket = null
             }
@@ -326,12 +482,46 @@ class AapTransport(
         packet: ByteArray,
     ) {
         if (!Log.isLoggable(TAG, Log.DEBUG)) return
+
+        // Heart-rate reports are the one thing that never reaches this log, at any level.
+        // FR-023 says no heart rate appears in any diagnostic path, and this log is the
+        // most diagnostic path there is — people paste it into bug reports. Its shape is
+        // still recorded, so a report arriving is still visible; only the body is not.
+        if (isHidInputReport(packet)) {
+            Log.d(TAG, "$direction ${packet.size} bytes, HID input report (body withheld)")
+            return
+        }
         Log.d(TAG, "$direction ${packet.joinToString(" ") { "%02X".format(it) }}")
+    }
+
+    /** True for a `0x17` frame carrying protobuf field 7 — a sensor report. */
+    private fun isHidInputReport(packet: ByteArray): Boolean {
+        if (packet.size <= HID_BODY_OFFSET) return false
+        if (!packet.copyOfRange(0, 4).contentEquals(AapProtocol.HEADER)) return false
+        val opcode = (packet[4].toInt() and 0xFF) or ((packet[5].toInt() and 0xFF) shl 8)
+        if (opcode != Opcode.HEAD_TRACKING.value) return false
+        return HidDescriptorParser.hasInputReport(packet.copyOfRange(HID_BODY_OFFSET, packet.size))
     }
 
     private companion object {
         const val TAG = "AapTransport"
-        const val READ_BUFFER_BYTES = 1024
+
+        /**
+         * Four times the largest frame observed (996 bytes, three service descriptors).
+         * Reassembly means an undersized buffer is now a performance detail rather than a
+         * correctness one, but sitting 28 bytes under the old 1024 was too close to read
+         * as deliberate.
+         */
+        const val READ_BUFFER_BYTES = 4096
+
+        /**
+         * How long a newly opened channel may stay silent before it is treated as dead.
+         *
+         * The accessory answers the handshake with its whole configuration in well under
+         * a second. Generous against that, and short enough that a user toggling heart
+         * rate on does not sit watching a spinner.
+         */
+        const val SILENT_CHANNEL_TIMEOUT_MILLIS = 6_000L
 
         /**
          * How long a write waits for the channel. Generous, because opening it involves a
@@ -341,6 +531,9 @@ class AapTransport(
 
         /** `BluetoothSocket.TYPE_L2CAP`, which is not public API. */
         const val L2CAP_TYPE = 3
+
+        /** Header, opcode and the `00 00 10 00 <length>` prefix a `0x17` frame carries. */
+        const val HID_BODY_OFFSET = 12
 
         /**
          * Apple's AAP service UUID, as advertised in the accessory's SDP record.

@@ -51,15 +51,17 @@ class ControlsScreenTest {
             ControlsUiState(
                 pod = pod,
                 controlAvailable = false,
-                gateReason = "The buds refused the channel mode this phone's Bluetooth stack offers.",
+                gateReason =
+                    "This phone won't let GreenPods send commands to your earbuds. " +
+                        "Battery, ear detection and auto-pause are unaffected.",
                 supportsNoiseControl = true,
                 supportsAdaptiveAudio = true,
             ),
             onModeSelected = { selected = it },
         )
 
-        compose.onNodeWithText("Controls unavailable").assertIsDisplayed()
-        compose.onNode(hasText("refused the channel mode", substring = true)).assertIsDisplayed()
+        compose.onNodeWithText("This phone can't change these").assertIsDisplayed()
+        compose.onNode(hasText("won't let GreenPods send commands", substring = true)).assertIsDisplayed()
 
         // The chips are visible — hiding them would read as a missing feature — but inert.
         // "Transparency" labels both the mode chip and the long-press cycle chip; the

@@ -52,12 +52,16 @@ fun HeadMotionToy(
     val pitch by animateFloatAsState(pitchDegrees.coerceIn(-45f, 45f), spring, label = "pitch")
     val roll by animateFloatAsState(rollDegrees.coerceIn(-45f, 45f), spring, label = "roll")
 
-    // A one-shot squash so a recognised gesture is felt, not just logged.
+    // A one-shot squash so a recognised gesture is felt, not just logged. The specs are
+    // read here rather than inside the effect: they come from the theme now, and a
+    // coroutine body is not a composable context.
+    val squash = GreenPodsMotion.fastSpatial<Float>()
+    val settle = GreenPodsMotion.slowSpatial<Float>()
     val bounce = remember { Animatable(1f) }
     LaunchedEffect(celebrating) {
         if (celebrating) {
-            bounce.animateTo(1.18f, GreenPodsMotion.fastSpatial())
-            bounce.animateTo(1f, GreenPodsMotion.slowSpatial())
+            bounce.animateTo(CELEBRATION_SCALE, squash)
+            bounce.animateTo(1f, settle)
         }
     }
 
@@ -123,3 +127,6 @@ private fun DrawScope.drawFace(
         strokeWidth = radius * 0.09f,
     )
 }
+
+/** How far a recognised gesture squashes the face before it settles back. */
+private const val CELEBRATION_SCALE = 1.18f

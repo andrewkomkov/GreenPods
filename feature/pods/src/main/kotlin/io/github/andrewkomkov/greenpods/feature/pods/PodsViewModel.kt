@@ -4,11 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.andrewkomkov.greenpods.core.data.PodRepository
 import io.github.andrewkomkov.greenpods.core.data.environment.Environment
+import io.github.andrewkomkov.greenpods.core.data.settings.SettingsRepository
+import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -26,8 +29,28 @@ data class PodsUiState(
     val pods: List<PodState> = emptyList(),
     val emptyReason: PodsEmptyReason = PodsEmptyReason.SEARCHING,
     val scanFailure: String? = null,
+    /**
+     * The heart-rate card's presentation, per accessory address.
+     *
+     * Decided here rather than in the composable so it can be asserted in a JVM test.
+     * The two things worth asserting — that settling shows no number, and that uncertain
+     * *withdraws* the last one rather than keeping it on screen — are exactly the ones
+     * that are painful to check through Compose and trivial to check here.
+     */
+    val heartRates: Map<String, HeartRateUi> = emptyMap(),
+    /**
+     * How often the earbuds are asked for a reading.
+     *
+     * Here because the full-screen view says it out loud: the number visibly holds still
+     * between reports, and a value that does not move is read as a frozen app unless the
+     * screen says how often it is meant to change.
+     */
+    val heartRateIntervalMillis: Int = GreenPodsSettings.Default.heartRateIntervalMillis,
 ) {
     val isEmpty: Boolean get() = pods.isEmpty()
+
+    fun heartRateOf(pod: PodState): HeartRateUi =
+        heartRates[pod.address] ?: HeartRateUi.of(pod.heartRate, pod.heartRateSensing)
 }
 
 /**
@@ -43,9 +66,23 @@ data class PodsUiState(
 class PodsViewModel(
     private val repository: PodRepository,
     environment: Flow<Environment>,
+    /**
+     * Null where the screen has nothing to switch.
+     *
+     * The heart-rate card offers "turn on" where it is off, and the full-screen view
+     * offers "stop": both are the same setting the Settings screen owns, reachable from
+     * where the state is being read. Optional so the view model stays constructible in a
+     * test that only cares about the accessory list.
+     */
+    private val settings: SettingsRepository? = null,
 ) : ViewModel() {
     val state: StateFlow<PodsUiState> =
-        combine(repository.pods, repository.scanFailure, environment) { pods, failure, env ->
+        combine(
+            repository.pods,
+            repository.scanFailure,
+            environment,
+            settings?.settings ?: flowOf(GreenPodsSettings.Default),
+        ) { pods, failure, env, preferences ->
             PodsUiState(
                 pods = pods,
                 emptyReason =
@@ -56,8 +93,22 @@ class PodsViewModel(
                         else -> PodsEmptyReason.SEARCHING
                     },
                 scanFailure = failure,
+                heartRates =
+                    pods.associate { pod ->
+                        pod.address to HeartRateUi.of(pod.heartRate, pod.heartRateSensing)
+                    },
+                heartRateIntervalMillis = preferences.heartRateIntervalMillis,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIPTION_TIMEOUT_MS), PodsUiState())
+
+    /** The heart-rate card's own switch, so the cost and the control sit together. */
+    fun setHeartRateEnabled(enabled: Boolean) {
+        val repository = settings ?: return
+        viewModelScope.launch { repository.update { it.copy(heartRateEnabled = enabled) } }
+    }
+
+    /** Asks the radio to start scanning again after it refused. */
+    fun retryScan() = repository.retryScan()
 
     /**
      * Asks the transport gate about an accessory the user tapped. Probing every device

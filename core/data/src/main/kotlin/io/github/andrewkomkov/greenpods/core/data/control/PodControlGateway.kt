@@ -1,5 +1,6 @@
 package io.github.andrewkomkov.greenpods.core.data.control
 
+import io.github.andrewkomkov.greenpods.core.data.heartrate.HeartRateController
 import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 
 /**
@@ -13,7 +14,7 @@ import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
  * An interface because the view models must be testable without a Bluetooth stack, and
  * because a device that *can* open the channel is not available to test against.
  */
-interface PodControlGateway {
+interface PodControlGateway : HeartRateController.HeartRateCommands {
     suspend fun setNoiseControlMode(
         address: String,
         mode: NoiseControlMode,
@@ -33,5 +34,23 @@ interface PodControlGateway {
     suspend fun setListeningModeCycle(
         address: String,
         modes: Set<NoiseControlMode>,
+    ): Boolean
+
+    /**
+     * Starts the head-orientation stream.
+     *
+     * Separate from the heart-rate pair even though the wire mechanism is the same: they
+     * are two sensors with two service ids and two report descriptors, and a shared
+     * "start a stream" would hide the day they stop agreeing.
+     */
+    suspend fun startHeadTracking(
+        address: String,
+        serviceId: Int,
+        intervalMicros: Int,
+    ): Boolean
+
+    suspend fun stopHeadTracking(
+        address: String,
+        serviceId: Int,
     ): Boolean
 }

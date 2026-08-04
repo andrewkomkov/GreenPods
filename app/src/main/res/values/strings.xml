@@ -6,4 +6,6 @@
     <string name="low_battery_channel_name">Low battery warnings</string>
     <string name="low_battery_title">%2$s · %1$s battery low</string>
     <string name="low_battery_text">%1$d%% remaining</string>
+    <string name="monitor_notification_heart_rate">%1$s · measuring heart rate</string>
+    <string name="health_rationale_title">Heart rate and Health Connect</string>
 </resources>

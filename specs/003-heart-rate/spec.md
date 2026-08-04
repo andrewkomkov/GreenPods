@@ -1,10 +1,26 @@
 # Feature Specification: Heart rate
 
-**Feature Branch**: `feat/heart-rate` *(not yet created)*
+**Feature Branch**: `feat/heart-rate`
 
 **Created**: 2026-08-04
 
-**Status**: Draft
+**Status**: Implemented; working on hardware. Accuracy and battery cost unclaimed.
+
+**Verified 2026-08-04** on a Pixel 8 (Android 17, unrooted) with AirPods Pro 3: the
+accessory's heart-rate service is discovered from its own announcement rather than
+assumed, reports arrive at the requested cadence, the confidence gate holds, the stop
+frame reaches the earbuds, report bodies never enter any log, and a heart rate reaches
+the screen.
+
+**Not claimed — and this is load-bearing, not a caveat.** SC-002 (accuracy against a
+reference monitor) and SC-006 (battery cost) were never measured. They are **deferred**,
+with their procedures and what each would establish recorded in
+[deferred-verification.md](./deferred-verification.md); they are not quietly dropped and
+they are not satisfied by anything else in this spec. Until they are done, GreenPods
+presents a sensor reading whose agreement with a reference instrument has never been
+checked, and whose cost to the earbuds' battery is unmeasured. The confidence threshold
+therefore still ships as the provisional 128 it started as. The Powerbeats Pro 2 route
+remains implemented and unverified on hardware, as the Assumptions below record.
 
 **Input**: Ship heart rate from AirPods Pro 3, and write it into Google's health store on
 Android so other apps can use it.
@@ -266,8 +282,9 @@ app offers and confirm none contains them; clear the data and confirm it is gone
 
 - **SC-001**: A user wearing the buds sees a trustworthy heart rate within 30 seconds of
   enabling the feature, and never sees an untrustworthy one before it.
-- **SC-002**: Across a 10-minute session at rest, no displayed reading differs from a
-  reference heart-rate monitor by more than 5 BPM for more than 5 % of the session.
+- **SC-002** *(deferred, unmet — see [deferred-verification.md](./deferred-verification.md))*:
+  Across a 10-minute session at rest, no displayed reading differs from a reference
+  heart-rate monitor by more than 5 BPM for more than 5 % of the session.
 - **SC-003**: Readings recorded to the system health store are readable by an independent
   health app, attributed to GreenPods and to the accessory that measured them, with times
   correct to the second.
@@ -275,7 +292,8 @@ app offers and confirm none contains them; clear the data and confirm it is gone
   across every test session.
 - **SC-005**: Heart-rate values appear in no diagnostic or bug-report output, verified by
   inspecting every such path after a measuring session.
-- **SC-006**: With the feature disabled, the accessory's battery drain over an hour is
+- **SC-006** *(deferred, unmet — see [deferred-verification.md](./deferred-verification.md))*:
+  With the feature disabled, the accessory's battery drain over an hour is
   indistinguishable from the app not being installed.
 - **SC-007**: The whole feature can be driven and observed from adb, including starting and
   stopping the sensor and reading its state.
@@ -328,6 +346,26 @@ app offers and confirm none contains them; clear the data and confirm it is gone
   hardware*. SC-003 is not claimed for that route. The work is still worth doing —
   `HeartRateGattSource` exists, is tested, and today has no caller — but the distinction
   between "tested" and "verified" is recorded rather than blurred.
+
+  **What was tested instead**, so the claim is checkable rather than a disclaimer:
+
+  - `HeartRateGattParserTest` pins the `0x2A37` characteristic decode against the
+    Bluetooth SIG Heart Rate Service specification — both BPM widths, the endianness of
+    the wide form, truncated values, the plausibility edges at 25 and 250 BPM, and the
+    flag bits that must be ignored rather than misread as a width selector. These byte
+    layouts come from the specification, **not from a capture**; that is the difference
+    from the AAP route, where every fixture is a real device's output.
+  - `HeartRateControllerTest` drives the controller through a fake `GattHeartRateReadings`
+    on a `POWERBEATS_PRO_2` state: the route reaches `Measuring`, every reading records
+    `source = GATT`, and a GATT source offered to a model without that feature is ignored
+    rather than used as a fallback (FR-004).
+  - `PodStateTest` covers the model carrying both routes — the live one is preferred, and
+    with neither live the lock names the preferred transport rather than the last tried.
+
+  What none of that establishes: that a Powerbeats Pro 2 actually advertises `0x180D`,
+  that its notifications arrive at the cadence assumed, or that the connection lifecycle
+  in `HeartRateGattSource` — service discovery, descriptor write, reconnection — behaves
+  against real hardware. Those need the device.
 - **The heart-rate report's timestamp is not a wall clock.** The captured value is about
   15 hours, which is an accessory-local counter, not a date. Times written anywhere are
   derived by anchoring that counter against the phone's clock once per session. Recorded

@@ -1,5 +1,6 @@
 package io.github.andrewkomkov.greenpods
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -7,13 +8,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
-import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticEvent
 import io.github.andrewkomkov.greenpods.core.designsystem.theme.GreenPodsTheme
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
-import io.github.andrewkomkov.greenpods.core.model.Transport
-import io.github.andrewkomkov.greenpods.core.model.TransportAvailability
-import io.github.andrewkomkov.greenpods.core.model.TransportStatus
+import io.github.andrewkomkov.greenpods.feature.settings.CapabilitiesUiState
+import io.github.andrewkomkov.greenpods.feature.settings.LockedCapabilities
 import io.github.andrewkomkov.greenpods.feature.settings.SettingsScreen
 import io.github.andrewkomkov.greenpods.feature.settings.SettingsUiState
 import org.junit.Rule
@@ -49,57 +47,57 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun transportStatusIsShownWithItsReason() {
+    fun whatWorksIsListedAsFeaturesRatherThanTransports() {
         show(
             SettingsUiState(
                 deviceName = "AirPods Pro 2",
-                transports =
-                    listOf(
-                        TransportStatus.AdvertisementAvailable,
-                        TransportStatus(
-                            Transport.AAP_L2CAP,
-                            TransportAvailability.UNAVAILABLE,
-                            "Android refuses PSM 0x1001.",
-                        ),
+                capabilities =
+                    CapabilitiesUiState(
+                        alwaysWorks = listOf("Battery, ear detection and auto-pause"),
+                        available = listOf("Heart rate"),
+                        locked =
+                            listOf(
+                                LockedCapabilities(
+                                    features = listOf("Head tracking", "Noise control"),
+                                    sentence = "This phone won't let GreenPods send commands to your earbuds.",
+                                ),
+                            ),
+                        known = true,
                     ),
             ),
         )
 
-        compose.onNodeWithText("What this phone can do").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("What works with this phone").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Head tracking, Noise control").performScrollTo().assertIsDisplayed()
         compose
-            .onNodeWithText("Apple protocol (L2CAP) — unavailable")
+            .onNode(hasText("won't let GreenPods send commands", substring = true))
             .performScrollTo()
             .assertIsDisplayed()
-        compose.onNodeWithText("Android refuses PSM 0x1001.").performScrollTo().assertIsDisplayed()
     }
 
     @Test
-    fun undecodedTrafficIsVisibleRatherThanHiddenBehindADeveloperFlag() {
+    fun noProtocolNamesReachTheSettingsScreen() {
+        // The brief's hard rule: nothing here may require knowing how Bluetooth works.
+        // These four are the words the old transport section put on screen.
         show(
             SettingsUiState(
-                diagnostics =
-                    listOf(
-                        DiagnosticEvent(
-                            atEpochMillis = 0L,
-                            category = DiagnosticCategory.UNKNOWN_TRAFFIC,
-                            message = "Control CHIME_VOLUME has no decoder yet",
-                            detail = "04 00 09 1F",
-                        ),
-                    ),
+                deviceName = "AirPods Pro 2",
+                capabilities = CapabilitiesUiState(known = true),
             ),
         )
 
-        compose.onNode(hasText("has no decoder yet", substring = true)).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("04 00 09 1F").performScrollTo().assertIsDisplayed()
+        listOf("L2CAP", "PSM", "GATT", "Diagnostics").forEach { jargon ->
+            compose.onAllNodes(hasText(jargon, substring = true)).assertCountEquals(0)
+        }
     }
 
     @Test
-    fun anEmptyDiagnosticsLogSaysSoInsteadOfLookingBroken() {
+    fun withNothingInRangeTheSectionSaysSoRatherThanLookingBroken() {
         show(SettingsUiState())
 
-        compose.onNodeWithText("Nothing recorded yet.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("No earbuds in range.").performScrollTo().assertIsDisplayed()
         compose
-            .onNodeWithText("Transport status appears once an accessory is nearby.")
+            .onNodeWithText("Open your case nearby and this fills in.")
             .performScrollTo()
             .assertIsDisplayed()
     }

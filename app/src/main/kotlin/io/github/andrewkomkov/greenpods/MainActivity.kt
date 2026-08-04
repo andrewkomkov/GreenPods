@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
                 GreenPodsApp(
                     onRequestPermission = ::requestPermissions,
                     onOpenUrl = ::openUrl,
+                    onOpenBluetoothSettings = ::openBluetoothSettings,
                 )
             }
         }
@@ -73,12 +75,20 @@ class MainActivity : ComponentActivity() {
      *
      * Driven from the settings flow rather than from the switch's click handler, so the
      * service state stays correct no matter where the setting was changed.
+     *
+     * **Heart rate implies the service.** The sensing session lives with the Bluetooth
+     * channel, and continuous Bluetooth work needs a foreground service — so enabling
+     * heart rate starts one even though `backgroundMonitoringEnabled` defaults to off.
+     * That default exists because a service the user did not ask for is hostile, and this
+     * is not that: the heart-rate toggle states the cost before it can be switched on, so
+     * the override is one the user consented to rather than one that happened to them
+     * (FR-012, FR-013, AD-8).
      */
     private fun observeBackgroundMonitoring() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 app.settingsRepository.settings
-                    .map { it.backgroundMonitoringEnabled }
+                    .map { it.backgroundMonitoringEnabled || it.heartRateEnabled }
                     .distinctUntilChanged()
                     .collect { enabled ->
                         val intent = Intent(this@MainActivity, PodMonitorService::class.java)
@@ -111,5 +121,17 @@ class MainActivity : ComponentActivity() {
 
     private fun openUrl(url: String) {
         runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+    }
+
+    /**
+     * Opens the system's Bluetooth settings.
+     *
+     * Rather than asking to enable Bluetooth directly: that request was deprecated, and
+     * an app switching a radio on from under the user is worse behaviour than showing
+     * them the switch. Wrapped because a phone with no Bluetooth settings activity is
+     * unusual but not impossible, and a crash there would be absurd.
+     */
+    private fun openBluetoothSettings() {
+        runCatching { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
     }
 }

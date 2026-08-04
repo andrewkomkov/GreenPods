@@ -97,6 +97,55 @@ class SettingsRepositoryTest {
             bindings.size shouldBe HeadGestureBinding.Defaults.size
         }
 
+    @Test
+    fun `heart rate and its health-store half are both off on a fresh install`() =
+        runTest {
+            val settings = repository().settings.first()
+
+            // FR-011 and FR-017: a sensor that costs the accessory's battery never starts
+            // unasked, and writing into someone's health history is a separate decision
+            // from seeing a number on screen.
+            settings.heartRateEnabled shouldBe false
+            settings.heartRateHealthConnectEnabled shouldBe false
+            settings.heartRateIntervalMillis shouldBe GreenPodsSettings.DEFAULT_HR_INTERVAL_MILLIS
+            settings.heartRateConfidenceThreshold shouldBe GreenPodsSettings.DEFAULT_HR_CONFIDENCE_THRESHOLD
+        }
+
+    @Test
+    fun `the four heart-rate settings round-trip`() =
+        runTest {
+            val repository = repository()
+
+            repository.update {
+                it.copy(
+                    heartRateEnabled = true,
+                    heartRateHealthConnectEnabled = true,
+                    heartRateIntervalMillis = 2_000,
+                    heartRateConfidenceThreshold = 100,
+                )
+            }
+
+            val stored = repository.settings.first()
+            stored.heartRateEnabled shouldBe true
+            stored.heartRateHealthConnectEnabled shouldBe true
+            stored.heartRateIntervalMillis shouldBe 2_000
+            // Calibration over adb has to survive a restart, or re-deriving the threshold
+            // means rebuilding the app (R-4).
+            stored.heartRateConfidenceThreshold shouldBe 100
+        }
+
+    @Test
+    fun `an absurd cadence or threshold is clamped rather than stored`() =
+        runTest {
+            val repository = repository()
+
+            repository.update { it.copy(heartRateIntervalMillis = 1, heartRateConfidenceThreshold = 9_000) }
+
+            val stored = repository.settings.first()
+            stored.heartRateIntervalMillis shouldBe GreenPodsSettings.MIN_HR_INTERVAL_MILLIS
+            stored.heartRateConfidenceThreshold shouldBe GreenPodsSettings.MAX_HR_CONFIDENCE
+        }
+
     private companion object {
         var counter = 0
     }

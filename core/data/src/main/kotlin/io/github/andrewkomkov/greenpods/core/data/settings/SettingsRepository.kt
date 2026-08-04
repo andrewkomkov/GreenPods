@@ -55,6 +55,10 @@ class SettingsRepository(
             preferences[Keys.SCAN_MODE] = updated.scanMode.name
             preferences[Keys.HEAD_GESTURES] = updated.headGesturesEnabled
             preferences[Keys.GESTURE_BINDINGS] = GestureBindingCodec.encode(updated.gestureBindings)
+            preferences[Keys.HEART_RATE] = updated.heartRateEnabled
+            preferences[Keys.HEART_RATE_HEALTH_CONNECT] = updated.heartRateHealthConnectEnabled
+            preferences[Keys.HEART_RATE_INTERVAL_MILLIS] = updated.heartRateIntervalMillis
+            preferences[Keys.HEART_RATE_CONFIDENCE] = updated.heartRateConfidenceThreshold
         }
     }
 
@@ -86,6 +90,16 @@ class SettingsRepository(
             scanMode = preferences[Keys.SCAN_MODE]?.let(::scanModeOrNull) ?: defaults.scanMode,
             headGesturesEnabled = preferences[Keys.HEAD_GESTURES] ?: defaults.headGesturesEnabled,
             gestureBindings = GestureBindingCodec.decode(preferences[Keys.GESTURE_BINDINGS]),
+            heartRateEnabled = preferences[Keys.HEART_RATE] ?: defaults.heartRateEnabled,
+            heartRateHealthConnectEnabled =
+                preferences[Keys.HEART_RATE_HEALTH_CONNECT]
+                    ?: defaults.heartRateHealthConnectEnabled,
+            heartRateIntervalMillis =
+                preferences[Keys.HEART_RATE_INTERVAL_MILLIS]
+                    ?: defaults.heartRateIntervalMillis,
+            heartRateConfidenceThreshold =
+                preferences[Keys.HEART_RATE_CONFIDENCE]
+                    ?: defaults.heartRateConfidenceThreshold,
         ).sanitised()
     }
 
@@ -101,11 +115,21 @@ class SettingsRepository(
         val SCAN_MODE = stringPreferencesKey("scan_mode")
         val HEAD_GESTURES = booleanPreferencesKey("head_gestures")
         val GESTURE_BINDINGS = stringPreferencesKey("gesture_bindings")
+        val HEART_RATE = booleanPreferencesKey("heart_rate")
+        val HEART_RATE_HEALTH_CONNECT = booleanPreferencesKey("heart_rate_health_connect")
+        val HEART_RATE_INTERVAL_MILLIS = intPreferencesKey("heart_rate_interval_millis")
+
+        /**
+         * Persisted so a calibration set over adb survives a restart — the threshold is
+         * provisional (R-4), and re-deriving it must not mean rebuilding the app.
+         */
+        val HEART_RATE_CONFIDENCE = intPreferencesKey("heart_rate_confidence")
     }
 
     companion object {
         private const val FILE_NAME = "greenpods_settings"
 
+        /** Prefer `GreenPodsStore`, which shares one store with the service memory. */
         fun create(context: Context): SettingsRepository =
             SettingsRepository(
                 PreferenceDataStoreFactory.create { context.preferencesDataStoreFile(FILE_NAME) },

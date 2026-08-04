@@ -85,10 +85,22 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                 raw(app, intent.getStringExtra("hex").orEmpty())
             }
 
+            "hr" -> {
+                heartRate(app, intent.getStringExtra("value").orEmpty())
+            }
+
+            "health" -> {
+                health(
+                    app = app,
+                    action = intent.getStringExtra("value").orEmpty(),
+                    minutes = intent.getLongExtra("minutes", DEFAULT_HEALTH_WINDOW_MINUTES).toInt(),
+                )
+            }
+
             else -> {
                 reply(
                     "unknown command '$command'. Known: dump, probe, set, inject, monitor, clear, " +
-                        "hiddenapi. See docs/adb.md",
+                        "hiddenapi, anc, raw, hr, health. See docs/adb.md",
                 )
             }
         }
@@ -201,6 +213,112 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
         }
     }
 
+    /**
+     * Turns heart-rate sensing on or off, or prints what it is doing.
+     *
+     * **Prints no value, ever.** Not here, not in `dump`, not in a diagnostic. The
+     * counters are what make the feature verifiable — `trusted` here against `samples`
+     * in `health count` is SC-009, checked in two commands — and a count is not a
+     * reading (FR-028).
+     */
+    private fun heartRate(
+        app: GreenPodsApplication,
+        value: String,
+    ) {
+        when (value.lowercase()) {
+            "on", "off" -> {
+                val enable = value.equals("on", ignoreCase = true)
+                app.applicationScope.launch {
+                    app.settingsRepository.update { it.copy(heartRateEnabled = enable) }
+                    // Enabling implies the monitoring service, because the session lives
+                    // with the Bluetooth channel and continuous Bluetooth work needs one.
+                    val intent = Intent(app, PodMonitorService::class.java)
+                    if (enable) app.startForegroundService(intent) else Unit
+                    reply("hr: ${if (enable) "enabled" else "disabled"}")
+                }
+            }
+
+            "status", "" -> {
+                app.applicationScope.launch {
+                    val pod = app.awaitPods(DEFAULT_WAIT_MILLIS).firstOrNull()
+                    if (pod == null) {
+                        reply("hr: no accessory in range")
+                        return@launch
+                    }
+                    val sensing = pod.heartRateSensing
+                    reply(
+                        "hr: state=${pod.heartRate.stateName} enabled=${sensing.enabled} " +
+                            "source=${sensing.source ?: "none"} " +
+                            "service=${sensing.serviceId?.let { "0x%02X".format(it) } ?: "none"} " +
+                            "interval=${sensing.requestedIntervalMicros?.div(1000) ?: 0}ms " +
+                            "reports=${sensing.reportsReceived} trusted=${sensing.trustedCount} " +
+                            "discarded=${sensing.discardedImplausible} " +
+                            "lastStop=${sensing.lastStopReason ?: "none"}",
+                    )
+                }
+            }
+
+            else -> {
+                reply("hr: unknown value '$value'. Known: on, off, status")
+            }
+        }
+    }
+
+    /**
+     * The health store, counted rather than read out.
+     *
+     * `count` filters on GreenPods' own `DataOrigin`. Counting everything in the window
+     * would report a chest strap someone else's app is writing as our output, which makes
+     * the verification claim false rather than merely imprecise (FR-029).
+     */
+    private fun health(
+        app: GreenPodsApplication,
+        action: String,
+        minutes: Int,
+    ) {
+        val link = app.healthConnectLink
+        app.applicationScope.launch {
+            when (action.lowercase()) {
+                "status", "" -> {
+                    // The outcome counters are what make "nothing is in Health Connect"
+                    // diagnosable: they separate never-attempted from attempted-and-
+                    // skipped from attempted-and-failed, which used to look identical.
+                    // Counts and reasons only — never a sample (FR-023).
+                    val outcome = link.outcome
+                    reply(
+                        "health: available=${link.availability().isAvailable} " +
+                            "write=${link.hasWritePermission()} read=${link.hasReadPermission()} " +
+                            "flushes=${outcome.flushesAttempted} records=${outcome.recordsWritten} " +
+                            "samples=${outcome.samplesWritten} " +
+                            "lastSkip=${outcome.lastSkipReason ?: "none"} " +
+                            "lastError=${outcome.lastError ?: "none"} " +
+                            ":: ${link.availability().sentence}",
+                    )
+                }
+
+                "count" -> {
+                    val count = link.countOwnRecords(minutes)
+                    if (count == null) {
+                        reply("health: cannot count — provider unavailable or read permission not held")
+                        return@launch
+                    }
+                    reply(
+                        "health: own records in last ${minutes}m: ${count.records} records, " +
+                            "${count.samples} samples",
+                    )
+                }
+
+                "clear" -> {
+                    reply("health: deleted own records = ${link.deleteOwnRecords()}")
+                }
+
+                else -> {
+                    reply("health: unknown value '$action'. Known: status, count, clear")
+                }
+            }
+        }
+    }
+
     private fun set(
         app: GreenPodsApplication,
         key: String,
@@ -239,6 +357,26 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
 
                     "headGestures" -> {
                         current.copy(headGesturesEnabled = on)
+                    }
+
+                    "hrIntervalMs" -> {
+                        current.copy(
+                            heartRateIntervalMillis =
+                                value.toIntOrNull() ?: current.heartRateIntervalMillis,
+                        )
+                    }
+
+                    // The threshold ships provisional (R-4). Overriding it from adb is
+                    // what makes calibration a measurement rather than a rebuild.
+                    "hrConfidenceThreshold" -> {
+                        current.copy(
+                            heartRateConfidenceThreshold =
+                                value.toIntOrNull() ?: current.heartRateConfidenceThreshold,
+                        )
+                    }
+
+                    "hrHealthConnect" -> {
+                        current.copy(heartRateHealthConnectEnabled = on)
                     }
 
                     "scanMode" -> {
@@ -359,6 +497,9 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
 
         /** How long to let the accessory answer a write before reporting what it said. */
         const val ECHO_WAIT_MILLIS = 1_500L
+
+        /** The window `health count` looks back over when none is given. */
+        const val DEFAULT_HEALTH_WINDOW_MINUTES = 10L
 
         /** Comfortably inside logcat's per-message limit. */
         const val CHUNK_BYTES = 2_000

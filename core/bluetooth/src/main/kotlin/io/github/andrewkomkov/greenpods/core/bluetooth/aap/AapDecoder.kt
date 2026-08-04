@@ -42,6 +42,50 @@ sealed interface AapEvent {
         val fields: List<String>,
     ) : AapEvent
 
+    /** A `0x17` descriptor frame: the accessory describing its own sensor services. */
+    data class HidServices(
+        val services: List<HidService>,
+    ) : AapEvent
+
+    /** Field 12 — the accessory saying those services are up and will answer. */
+    data class HidServicesReady(
+        val serviceIds: List<Int>,
+    ) : AapEvent
+
+    /**
+     * Field 9 — the accessory acknowledging a start, naming the service it acted on.
+     *
+     * An acknowledgement of a **command**, never evidence of a measurement. Nothing may
+     * derive a running sensor from this: on this transport "the write was accepted" is
+     * the characteristic false positive, and only an arriving report means the sensor is
+     * on (Principle I).
+     */
+    data class HidServiceStarted(
+        val serviceId: Int,
+    ) : AapEvent
+
+    /** One trusted-or-not heart-rate measurement, straight off the wire. */
+    data class HeartRateReport(
+        val serviceId: Int,
+        val reading: io.github.andrewkomkov.greenpods.core.model.HeartRateReading,
+    ) : AapEvent
+
+    /**
+     * A HID input report that did not become a reading — an undecoded report id, a
+     * length that disagrees with the descriptor, an implausible value.
+     *
+     * Carries **shape only**: which service, which report id, how many bytes and why.
+     * That is what lets Principle IV ("nothing is dropped silently") and FR-023 ("no
+     * heart rate in any diagnostic") both hold at once — nothing is lost, and no value
+     * is written down (R-9).
+     */
+    data class UnhandledHidReport(
+        val serviceId: Int,
+        val reportId: Int,
+        val length: Int,
+        val reason: String,
+    ) : AapEvent
+
     /** A control packet we recognise the id of but have no typed model for yet. */
     data class UnhandledControl(
         val command: ControlCommand,
@@ -66,10 +110,74 @@ sealed interface AapEvent {
 /**
  * Turns raw AAP packets into [AapEvent]s.
  *
- * Pure and stateless so the whole protocol surface is unit-testable without a
- * device — which is the only practical way to validate a reverse-engineered format.
+ * Everything except opcode `0x17` is stateless, and the codec half is pure, so the
+ * protocol surface stays unit-testable without a device — the only practical way to
+ * validate a reverse-engineered format.
+ *
+ * `0x17` is the exception, and it has to be: it is a HID transport carrying several
+ * sensor services at once, and which service a report belongs to is only knowable from
+ * the descriptors the accessory sent earlier in the same session. So the decoder is an
+ * instance with a session's worth of memory — one per channel — rather than an object.
+ *
+ * That memory is also what fixes an existing defect. `0x17` frames used to be routed by
+ * *packet length*: anything 55 bytes or longer went to the head-tracking decoder, which
+ * reads fixed offsets. Every service descriptor the accessory sends is longer than that,
+ * so every one of them was decoded as a head pose made of garbage. Nothing noticed only
+ * because head gestures are off by default (R-3).
  */
-object AapDecoder {
+class AapDecoder(
+    /** Injected so the timestamp anchor is testable; never read for anything else. */
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
+    private var services: List<HidService> = emptyList()
+    private var heartRateServiceId: Int? = null
+    private var headTrackingServiceId: Int? = null
+    private var heartRateDecoder: HeartRateReportDecoder? = null
+    private val anchor = HeartRateTimestampAnchor()
+
+    /** Services the accessory has described so far this session. */
+    val knownServices: List<HidService> get() = services
+
+    /** The discovered heart-rate service id, or null until descriptors arrive (FR-002). */
+    val discoveredHeartRateServiceId: Int? get() = heartRateServiceId
+
+    /** The feature report id that carries the interval, from the accessory's descriptor. */
+    val heartRateFeatureReportId: Int?
+        get() = services.firstOrNull { it.isHeartRate }?.layout?.intervalFeatureReportId
+
+    /**
+     * The same, for head tracking.
+     *
+     * Read from the accessory's own descriptors rather than assumed. LibrePods hard-codes
+     * `0x0E` here; that constant is true of one firmware and is exactly the bug FR-002
+     * exists to prevent, so a model that does not describe the report gets no stream
+     * rather than a guessed one.
+     */
+    val headTrackingFeatureReportId: Int?
+        get() = services.firstOrNull { it.isHeadTracking }?.layout?.intervalFeatureReportId
+
+    /**
+     * True when a heart-rate service was found **and** its descriptor declares a
+     * confidence field. Without one there is nothing to gate on and the feature reports
+     * itself unsupported rather than showing numbers it cannot vouch for (R-2).
+     */
+    val canMeasureHeartRate: Boolean get() = heartRateDecoder?.isUsable == true
+
+    /**
+     * Forgets everything session-scoped.
+     *
+     * The timestamp anchor especially: nothing guarantees the accessory's counter
+     * survives a disconnect, and carrying an anchor across sessions would put readings
+     * at times derived from a counter that no longer means the same thing (R-4a).
+     */
+    fun resetSession() {
+        services = emptyList()
+        heartRateServiceId = null
+        headTrackingServiceId = null
+        heartRateDecoder = null
+        anchor.reset()
+    }
+
     fun decode(packet: ByteArray): AapEvent {
         val opcode = AapProtocol.opcodeOf(packet) ?: return AapEvent.Unknown(packet)
         val payload = AapProtocol.payloadOf(packet)
@@ -79,10 +187,111 @@ object AapDecoder {
             Opcode.EAR_DETECTION -> decodeEarDetection(payload) ?: AapEvent.Unknown(packet)
             Opcode.CONTROL -> decodeControl(payload) ?: AapEvent.Unknown(packet)
             Opcode.CONVERSATIONAL_AWARENESS -> decodeAwarenessLevel(payload) ?: AapEvent.Unknown(packet)
-            Opcode.HEAD_TRACKING -> decodeHeadTracking(packet) ?: AapEvent.Unknown(packet)
+            Opcode.HEAD_TRACKING -> decodeHid(packet) ?: AapEvent.Unknown(packet)
             Opcode.DEVICE_INFO -> AapEvent.DeviceInfo(decodeNullTerminatedStrings(payload))
             else -> AapEvent.Unknown(packet)
         }
+    }
+
+    /**
+     * Routes a `0x17` frame on the protobuf field it carries — descriptors, readiness or
+     * an input report — and never on how long it is.
+     */
+    private fun decodeHid(packet: ByteArray): AapEvent? {
+        if (packet.size <= HID_BODY_OFFSET) return null
+        val body = packet.copyOfRange(HID_BODY_OFFSET, packet.size)
+
+        HidDescriptorParser.services(body).takeIf { it.isNotEmpty() }?.let { discovered ->
+            rememberServices(discovered)
+            return AapEvent.HidServices(discovered)
+        }
+
+        HidDescriptorParser.readyServiceIds(body).takeIf { it.isNotEmpty() }?.let { ready ->
+            return AapEvent.HidServicesReady(ready)
+        }
+
+        HidDescriptorParser.inputReport(body)?.let { (serviceId, report) ->
+            return decodeInputReport(packet, serviceId, report)
+        }
+
+        // The accessory confirming which service it started. Surfaced so it stops being
+        // unknown traffic — but deliberately *not* a state change: this says a command
+        // was acted on, and only a report says the sensor is running (Principle I).
+        HidDescriptorParser.startedServiceId(body)?.let { serviceId ->
+            return AapEvent.HidServiceStarted(serviceId)
+        }
+
+        // Field 8 is our own start/stop request coming back. Nothing to report, and
+        // certainly not a state change — a write is not a change (Principle I).
+        if (HidDescriptorParser.isRequest(body)) return null
+        return null
+    }
+
+    private fun decodeInputReport(
+        packet: ByteArray,
+        serviceId: Int,
+        report: ByteArray,
+    ): AapEvent {
+        val reportId = report.firstOrNull()?.toInt()?.and(0xFF) ?: -1
+
+        if (serviceId == heartRateServiceId) {
+            val decoder =
+                heartRateDecoder
+                    ?: return AapEvent.UnhandledHidReport(serviceId, reportId, report.size, "no usable layout")
+            return when (val result = decoder.decode(report, anchor, clock())) {
+                is HeartRateDecodeResult.Decoded -> {
+                    AapEvent.HeartRateReport(serviceId, result.reading)
+                }
+
+                is HeartRateDecodeResult.Unhandled -> {
+                    AapEvent.UnhandledHidReport(serviceId, result.reportId, result.length, result.reason.name)
+                }
+            }
+        }
+
+        // Head tracking, once the descriptors have said which service it is. Before they
+        // arrive, the historical length rule stands in — but only for frames that are
+        // actually input reports, which is what stops descriptor frames reaching it.
+        val isHeadTracking =
+            serviceId == headTrackingServiceId ||
+                (headTrackingServiceId == null && packet.size >= HEAD_TRACKING_MIN_BYTES)
+        if (isHeadTracking) {
+            return decodeHeadTracking(packet)
+                ?: AapEvent.UnhandledHidReport(serviceId, reportId, report.size, "head pose too short")
+        }
+
+        return AapEvent.UnhandledHidReport(serviceId, reportId, report.size, "no decoder for this service")
+    }
+
+    /**
+     * Seeds the decoder with services this accessory announced on an **earlier** channel.
+     *
+     * Not a shortcut, and not a violation of FR-002. The accessory announces its services
+     * once per Bluetooth link, in answer to the first request after the link comes up — so
+     * an app that restarts mid-link has lost the announcement and cannot get another one,
+     * and until now that meant heart rate could not be switched on until the earbuds were
+     * put back in the case. Remembering what *this accessory said about itself* is still
+     * discovery; what FR-002 forbids is a constant that happens to match, and a
+     * remembered descriptor is neither constant nor assumed.
+     *
+     * Ignored once a live announcement has arrived: the accessory's current word about
+     * itself always outranks a remembered one.
+     */
+    fun restoreServices(remembered: List<HidService>) {
+        if (services.isNotEmpty() || remembered.isEmpty()) return
+        rememberServices(remembered)
+    }
+
+    private fun rememberServices(discovered: List<HidService>) {
+        services = discovered
+        heartRateServiceId = discovered.firstOrNull { it.isHeartRate }?.id
+        headTrackingServiceId = discovered.firstOrNull { it.isHeadTracking }?.id
+        heartRateDecoder =
+            discovered
+                .firstOrNull { it.isHeartRate }
+                ?.layout
+                ?.let(::HeartRateReportDecoder)
+                ?.takeIf { it.isUsable }
     }
 
     /**
@@ -159,8 +368,17 @@ object AapDecoder {
     }
 
     /**
-     * Head-tracking sample. Offsets are absolute within the packet, per the
-     * captured layout, so this reads from [packet] rather than the payload slice.
+     * Head-tracking sample.
+     *
+     * The offsets are absolute within the packet and are **unchanged** from before the
+     * `0x17` routing was fixed. That is deliberate: where a head pose sits inside its
+     * field-7 entry has never been captured, so re-deriving these offsets from the
+     * protobuf structure would be arithmetic on an assumption. What changed is only
+     * *which* frames reach here — input reports on the head-tracking service, rather
+     * than anything at all that happened to be 55 bytes long.
+     *
+     * Re-deriving them properly needs one capture of a head-tracking frame alongside its
+     * descriptors; until then, leaving them alone is the honest option.
      */
     private fun decodeHeadTracking(packet: ByteArray): AapEvent? {
         if (packet.size < HEAD_TRACKING_MIN_BYTES) return null
@@ -210,9 +428,20 @@ object AapDecoder {
             else -> WearState.UNKNOWN
         }
 
-    private const val RECORD_BYTES = 5
-    private const val COMPONENT_RIGHT = 0x02
-    private const val COMPONENT_LEFT = 0x04
-    private const val COMPONENT_CASE = 0x08
-    private const val HEAD_TRACKING_MIN_BYTES = 55
+    private companion object {
+        const val RECORD_BYTES = 5
+        const val COMPONENT_RIGHT = 0x02
+        const val COMPONENT_LEFT = 0x04
+        const val COMPONENT_CASE = 0x08
+
+        /** Header, opcode and the `00 00 10 00 <length>` prefix a `0x17` frame carries. */
+        const val HID_BODY_OFFSET = 12
+
+        /**
+         * The historical length rule, kept only as a fallback for frames that arrive
+         * before the accessory has described its services. It is no longer the primary
+         * test, and it no longer sees anything but input reports.
+         */
+        const val HEAD_TRACKING_MIN_BYTES = 55
+    }
 }

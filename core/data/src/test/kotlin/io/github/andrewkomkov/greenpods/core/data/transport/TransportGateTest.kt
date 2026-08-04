@@ -3,6 +3,7 @@ package io.github.andrewkomkov.greenpods.core.data.transport
 import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapAvailability
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
+import io.github.andrewkomkov.greenpods.core.model.HeartRateState
 import io.github.andrewkomkov.greenpods.core.model.PodFeature
 import io.github.andrewkomkov.greenpods.core.model.PodModel
 import io.github.andrewkomkov.greenpods.core.model.PodState
@@ -198,20 +199,34 @@ class TransportGateTest {
     }
 
     @Test
-    fun `AirPods Pro 3 heart rate stays locked even with the channel open`() =
+    fun `AirPods Pro 3 heart rate unlocks with the Apple protocol channel and nothing else`() =
         runTest {
             val (gate, _) = gate(attempted(AapAvailability.Available))
             gate.probeAap(ADDRESS)
 
             val decorated = gate.decorate(pod(PodModel.AIRPODS_PRO_3))
 
-            // The sensor can be switched on over AAP, but the measurement frame has
-            // never been decoded — so the transport being live is not enough, and the
-            // reason shown must be that gap rather than a Bluetooth excuse.
-            decorated.usableFeatures shouldNotContain PodFeature.HEART_RATE_AAP
-            decorated.gatedFeatures shouldContain PodFeature.HEART_RATE_AAP
-            decorated.reasonFor(PodFeature.HEART_RATE_AAP) shouldContainText "not publicly decoded"
+            // The report format is decoded now, so the channel being live is sufficient.
+            // What has not changed is that the *standard* profile is still absent on this
+            // model, and the reason shown for that must say so rather than blame the
+            // phone: the two routes are separate all the way down (FR-004).
+            decorated.usableFeatures shouldContain PodFeature.HEART_RATE_AAP
             decorated.statusOf(Transport.GATT).reason shouldContainText "does not expose"
+        }
+
+    @Test
+    fun `with the channel refused, heart rate is locked against the transport's own reason`() =
+        runTest {
+            val (gate, _) = gate(attempted(AapAvailability.ChannelNotEstablished("hidden constructor")))
+            gate.probeAap(ADDRESS)
+
+            val decorated = gate.decorate(pod(PodModel.AIRPODS_PRO_3))
+
+            decorated.gatedFeatures shouldContain PodFeature.HEART_RATE_AAP
+            val locked = decorated.heartRate
+            (locked is HeartRateState.Locked) shouldBe true
+            (locked as HeartRateState.Locked).transport shouldBe Transport.AAP_L2CAP
+            locked.reason.isNotBlank() shouldBe true
         }
 
     private companion object {

@@ -5,9 +5,12 @@ import io.github.andrewkomkov.greenpods.core.bluetooth.ble.PodSighting
 import io.github.andrewkomkov.greenpods.core.bluetooth.ble.PodSightingSource
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
+import io.github.andrewkomkov.greenpods.core.data.transport.BondedPodIdentity
+import io.github.andrewkomkov.greenpods.core.data.transport.PodIdentity
 import io.github.andrewkomkov.greenpods.core.data.transport.TransportGate
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
-import io.github.andrewkomkov.greenpods.core.model.HeartRateSample
+import io.github.andrewkomkov.greenpods.core.model.HeartRateSensing
+import io.github.andrewkomkov.greenpods.core.model.HeartRateState
 import io.github.andrewkomkov.greenpods.core.model.PodModel
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.TransportStatus
@@ -32,6 +35,17 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.update
+
+/**
+ * A decoded AAP message and which accessory it came from.
+ *
+ * The repository folds these into state; the heart-rate session needs to *see* them,
+ * because service discovery and a report arriving are both events rather than states.
+ */
+data class AddressedAapEvent(
+    val address: String,
+    val event: AapEvent,
+)
 
 /**
  * Single source of truth for what GreenPods knows about nearby accessories.
@@ -66,6 +80,15 @@ class PodRepository(
      */
     private val scope: CoroutineScope,
     private val settings: Flow<GreenPodsSettings> = flowOf(GreenPodsSettings.Default),
+    /**
+     * What an accessory is called across address rotations.
+     *
+     * Defaults to the advertised address so nothing that has no way to resolve a bond
+     * has to pretend it does. The app supplies [BondedPodIdentity], which is what keeps
+     * an open channel, its overlay and its heart-rate session attached to the same
+     * earbuds after they come out of the case.
+     */
+    private val identity: PodIdentity = PodIdentity.Advertised,
     private val clock: () -> Long = System::currentTimeMillis,
     /**
      * Drives re-evaluation of staleness. Without it an accessory that stops
@@ -81,7 +104,26 @@ class PodRepository(
         },
 ) {
     private val overlays = MutableStateFlow<Map<String, PodOverlay>>(emptyMap())
+
+    /**
+     * Which undecodable HID report shapes have already been written down.
+     *
+     * Cleared when a channel closes, because the next channel may genuinely differ — a
+     * shape that was undecodable only because descriptors were missed is worth recording
+     * again once there is a new session to blame it on.
+     */
+    private val seenHidShapes = mutableSetOf<String>()
     private val _scanFailure = MutableStateFlow<String?>(null)
+
+    /**
+     * Bumped when the user asks for the scan to be started again.
+     *
+     * A radio that refused a scan usually keeps refusing until something changes, and the
+     * only thing the app can change is to ask once more. Without this the "try again"
+     * the empty state offers would be a button that does nothing — worse than not
+     * offering one, because it teaches that the app's buttons are decorative.
+     */
+    private val retries = MutableStateFlow(0)
 
     /**
      * Sightings fed in by hand rather than heard on the air.
@@ -94,15 +136,24 @@ class PodRepository(
      */
     private val injected = MutableSharedFlow<PodSighting>(extraBufferCapacity = INJECT_BUFFER)
 
+    private val _aapEvents = MutableSharedFlow<AddressedAapEvent>(extraBufferCapacity = AAP_EVENT_BUFFER)
+
     /** Set when the scanner cannot run — Bluetooth off, permission missing, radio busy. */
     val scanFailure: StateFlow<String?> = _scanFailure.asStateFlow()
 
+    /**
+     * Every decoded AAP message, as it arrives.
+     *
+     * Overlay state answers "what is true now"; this answers "what just happened", and
+     * the heart-rate session needs the second. Buffered rather than blocking: a slow
+     * subscriber must never stall the socket reader.
+     */
+    val aapEvents: Flow<AddressedAapEvent> = _aapEvents
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private val sighted: Flow<Map<String, PodState>> =
-        settings
-            .map { it.scanMode }
-            .distinctUntilChanged()
-            .flatMapLatest { scanMode ->
+        combine(settings.map { it.scanMode }.distinctUntilChanged(), retries, ::Pair)
+            .flatMapLatest { (scanMode, _) ->
                 merge(source.sightings(scanMode), injected)
                     .onStart { _scanFailure.value = null }
                     .catch { error ->
@@ -172,7 +223,15 @@ class PodRepository(
     fun onAapChannelClosed(
         address: String,
         reason: String,
-    ) = gate.recordChannelClosed(address, reason)
+    ) {
+        seenHidShapes.clear()
+        gate.recordChannelClosed(address, reason)
+    }
+
+    /** Restarts the scan the radio refused. Safe to call when nothing is wrong. */
+    fun retryScan() {
+        retries.value += 1
+    }
 
     /**
      * Feeds a sighting into the pipeline as though the radio had heard it.
@@ -206,6 +265,40 @@ class PodRepository(
                 )
             }
 
+            // By shape, never by body. This is the one place FR-023 ("no heart rate in
+            // any diagnostic") and Principle IV ("unknown traffic is never dropped")
+            // genuinely collide, and recording *that* a report arrived and what it was —
+            // rather than what it said — is what lets both hold (R-9).
+            is AapEvent.UnhandledHidReport -> {
+                // Once per distinct shape, not once per report. These arrive at the
+                // sensor's cadence — 152 identical lines in one session evicted the whole
+                // rest of the log, including the channel history needed to work out why
+                // they were undecodable in the first place. Principle IV asks that nothing
+                // be dropped silently, and the shape is what carries the information; the
+                // hundred and fifty-first copy of it carries none.
+                val shape = "%02X/%d/%s".format(event.serviceId, event.reportId, event.reason)
+                if (seenHidShapes.add(shape)) {
+                    diagnostics.record(
+                        DiagnosticCategory.UNKNOWN_TRAFFIC,
+                        "HID report on service 0x%02X has no decoder".format(event.serviceId),
+                        "report id ${event.reportId}, ${event.length} bytes, ${event.reason}. " +
+                            "Repeats are not logged again.",
+                    )
+                }
+            }
+
+            is AapEvent.HidServices -> {
+                diagnostics.record(
+                    DiagnosticCategory.TRANSPORT,
+                    "Accessory described ${event.services.size} HID services",
+                    event.services.joinToString { service ->
+                        "0x%02X %s".format(service.id, service.name ?: "unnamed")
+                    },
+                )
+            }
+
+            // AapEvent.HeartRateReport deliberately falls through to nothing. A reading
+            // reaches the controller and the screen; it reaches no log, at any level.
             else -> {
                 Unit
             }
@@ -214,14 +307,24 @@ class PodRepository(
             val existing = current[address] ?: PodOverlay.Empty
             current + (address to existing.reduce(event))
         }
+        _aapEvents.tryEmit(AddressedAapEvent(address, event))
     }
 
-    fun onHeartRate(
+    /**
+     * Publishes what the heart-rate session currently is, and the counts behind it.
+     *
+     * A state, never a sample: the number lives inside [HeartRateState.Measuring] or
+     * nowhere, so a screen, a health-store writer and a diagnostic cannot each decide
+     * for themselves whether a reading is worth showing (AD-3).
+     */
+    fun onHeartRateState(
         address: String,
-        sample: HeartRateSample,
+        state: HeartRateState,
+        sensing: HeartRateSensing,
     ) {
         overlays.update { current ->
-            current + (address to (current[address] ?: PodOverlay.Empty).copy(heartRate = sample))
+            val existing = current[address] ?: PodOverlay.Empty
+            current + (address to existing.copy(heartRate = state, heartRateSensing = sensing))
         }
     }
 
@@ -233,12 +336,48 @@ class PodRepository(
         overlays.update { it - address }
     }
 
+    /**
+     * The key to file a sighting under: the accessory's stable identity, unless taking it
+     * would merge two different accessories.
+     *
+     * [PodIdentity] answers "which bond does this advertisement belong to", and with a
+     * single paired Apple accessory the honest answer for *any* Apple advertisement is
+     * that one bond. That is right for the case it was built for — the same earbuds
+     * advertising from a rotated address — and wrong when a second Apple accessory is in
+     * the room, which on a real phone is most of the time. Collapsing them produced a pod
+     * whose model changed with whichever beacon landed last, and a heart-rate feature that
+     * reported itself unsupported on AirPods Pro 3.
+     *
+     * So the model decides. Same model, same accessory: merge, and the rotation is
+     * invisible. Different model: keep them apart, and accept that rotation is only
+     * absorbed for one accessory — the honest limit of what a private address allows.
+     */
+    private fun stableKeyFor(
+        known: Map<String, PodState>,
+        fresh: PodState,
+    ): String {
+        val key = identity.stableKey(fresh.address)
+        if (key == fresh.address) return key
+        val existing = known[key] ?: return key
+        return if (existing.model == fresh.model) key else fresh.address
+    }
+
+    /**
+     * Folds one sighting in, under the accessory's stable key rather than the address it
+     * happened to advertise from.
+     *
+     * The substitution happens here and nowhere else, deliberately: every consumer
+     * downstream — the overlay, the transport gate, the heart-rate session — keys off
+     * `PodState.address`, so resolving once at the point of accumulation makes all of them
+     * agree without any of them knowing that rotation exists. Doing it later would leave
+     * each consumer to remember, and the one that forgot would fail silently.
+     */
     private fun accumulate(
         known: Map<String, PodState>,
         sighting: PodSighting,
     ): Map<String, PodState> {
-        val fresh = sighting.toPodState()
-        val existing = known[sighting.address]
+        val fresh = sighting.toPodState().let { it.copy(address = stableKeyFor(known, it)) }
+        val existing = known[fresh.address]
         val updated =
             existing?.copy(
                 model = fresh.model,
@@ -247,7 +386,7 @@ class PodRepository(
                 rssi = fresh.rssi,
                 lastSeenEpochMillis = fresh.lastSeenEpochMillis,
             ) ?: fresh
-        return known + (sighting.address to updated)
+        return known + (fresh.address to updated)
     }
 
     /**
@@ -275,5 +414,11 @@ class PodRepository(
 
         /** Room for a short burst of injected sightings without blocking the caller. */
         const val INJECT_BUFFER = 16
+
+        /**
+         * A second of heart-rate reports plus whatever else the channel says.
+         * Buffered so a slow subscriber drops events rather than stalling the reader.
+         */
+        const val AAP_EVENT_BUFFER = 64
     }
 }
