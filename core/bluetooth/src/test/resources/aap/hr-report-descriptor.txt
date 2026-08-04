@@ -1,0 +1,15 @@
+# The heart-rate service's own HID report descriptor, 126 bytes, VERBATIM.
+#
+# Source: as hid-descriptors.txt — AirPods Pro 3, firmware 81.2675…, 2026-08-04,
+# recorded in specs/003-heart-rate/research.md R-2 and docs/protocol-research.md.
+#
+# Every byte below came off the accessory. Do not edit it to make a test pass: a
+# decoder that disagrees with this is wrong, and the only legitimate change is a
+# re-capture from hardware with the source recorded (Principle III).
+
+05 20 09 16 A1 01 85 01 0A 0E 03 14 27 FF FF FF 7F 75 20 95 01 B1 02 0A
+B8 04 26 FF 00 75 08 95 01 81 02 06 15 FF 0A 20 01 95 01 75 08 81 02 26
+FF 7F 06 15 FF 0A 21 01 95 01 75 10 81 02 75 08 95 01 15 01 25 02 1A 04
+01 2A 05 01 81 00 06 00 FF 09 23 A1 00 15 00 24 06 15 FF 09 04 95 08 75
+08 81 02 06 0A FF 09 12 95 04 75 08 81 02 85 02 06 0A FF 09 13 96 58 02
+75 08 81 02 C0 C0

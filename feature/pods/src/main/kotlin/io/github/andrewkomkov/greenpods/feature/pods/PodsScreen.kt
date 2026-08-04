@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -24,12 +25,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.andrewkomkov.greenpods.core.designsystem.component.BatteryRing
 import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilityRow
 import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilityUi
+import io.github.andrewkomkov.greenpods.core.model.HeartRateReading
+import io.github.andrewkomkov.greenpods.core.model.HeartRateSensing
+import io.github.andrewkomkov.greenpods.core.model.HeartRateState
 import io.github.andrewkomkov.greenpods.core.model.PodState
+import io.github.andrewkomkov.greenpods.core.model.Transport
 import io.github.andrewkomkov.greenpods.core.model.WearState
 
 /**
@@ -120,15 +127,7 @@ private fun PodCard(
                 )
             }
 
-            pod.heartRate?.let { sample ->
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Filled.MonitorHeart, contentDescription = null)
-                    Text("${sample.beatsPerMinute} bpm", style = MaterialTheme.typography.titleMedium)
-                }
-            }
+            HeartRateCard(state = pod.heartRate, sensing = pod.heartRateSensing)
 
             // Gated features are listed alongside usable ones so the absence of a
             // control reads as a platform limit rather than a missing feature.
@@ -138,6 +137,191 @@ private fun PodCard(
                 Text("Check what this phone can control")
             }
         }
+    }
+}
+
+/**
+ * The heart-rate card.
+ *
+ * Every state gets a **different shape**, not a different string in the same shape.
+ * FR-008 is that a settling sensor must never be mistaken for a result, and two states
+ * that differ only in wording are two states a glance cannot tell apart. So a trusted
+ * reading is a number; settling is a progress form with no number in it at all; and
+ * uncertain visibly withdraws the number rather than blanking the card.
+ *
+ * The card is present in every state including the locked and unsupported ones. A
+ * missing card reads as a bug; a card that explains itself reads as the hardware
+ * (Principle II).
+ */
+@Composable
+private fun HeartRateCard(
+    state: HeartRateState,
+    sensing: HeartRateSensing,
+    modifier: Modifier = Modifier,
+) {
+    val reading = state.trustedReading
+
+    Row(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .semantics(mergeDescendants = true) {
+                    // TalkBack must hear a state, never a bare number: "81 beats per
+                    // minute" read out of context is exactly the reading-as-fact this
+                    // feature spends its whole design avoiding.
+                    contentDescription = HeartRateCopy.spoken(state, sensing)
+                },
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (state is HeartRateState.Settling || state is HeartRateState.Starting) {
+            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+        } else {
+            Icon(Icons.Filled.MonitorHeart, contentDescription = null)
+        }
+
+        Column(Modifier.weight(1f)) {
+            if (reading != null) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    Text(
+                        reading.beatsPerMinute.toString(),
+                        style = MaterialTheme.typography.headlineMedium,
+                    )
+                    Text(
+                        HeartRateCopy.UNIT,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
+                }
+            } else {
+                Text(HeartRateCopy.title(state), style = MaterialTheme.typography.titleMedium)
+            }
+
+            Text(
+                HeartRateCopy.body(state, sensing),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Every word the heart-rate card can say, in one object.
+ *
+ * Here rather than inline so a unit test can read all of it at once and assert what it
+ * does **not** contain. FR-010 forbids presenting this as a medical measurement, and the
+ * way that requirement decays is one well-meant sentence at a time — "normal", "resting
+ * rate", a range, a comparison. A list a test can walk is the only version of that rule
+ * that survives the next person adding a state.
+ */
+internal object HeartRateCopy {
+    const val UNIT = "bpm"
+
+    fun title(state: HeartRateState): String =
+        when (state) {
+            is HeartRateState.Measuring -> "${state.reading.beatsPerMinute} $UNIT"
+            is HeartRateState.Settling -> "Measuring…"
+            is HeartRateState.Starting -> "Starting the sensor…"
+            is HeartRateState.Uncertain -> "Reading uncertain"
+            is HeartRateState.Off -> "Heart rate is off"
+            is HeartRateState.Unavailable -> "Not measuring"
+            is HeartRateState.Locked -> "Heart rate is locked"
+            is HeartRateState.Unsupported -> "No heart-rate sensor"
+        }
+
+    fun body(
+        state: HeartRateState,
+        sensing: HeartRateSensing = HeartRateSensing.Idle,
+    ): String =
+        when (state) {
+            is HeartRateState.Measuring -> {
+                route(state.reading.source)
+            }
+
+            is HeartRateState.Settling -> {
+                "The sensor is still settling. No number is shown until it is worth showing."
+            }
+
+            is HeartRateState.Starting -> {
+                "Waiting for the first report from the earbuds."
+            }
+
+            is HeartRateState.Uncertain -> {
+                "The earbuds report low confidence, so the last number has been withdrawn. " +
+                    "Still measuring."
+            }
+
+            is HeartRateState.Off -> {
+                "Turn it on in Settings. It draws on the earbuds' battery."
+            }
+
+            is HeartRateState.Unavailable -> {
+                state.reason.ifBlank { "Sensing stopped." }
+            }
+
+            is HeartRateState.Locked -> {
+                state.reason
+            }
+
+            is HeartRateState.Unsupported -> {
+                state.reason
+            }
+        }.let { text ->
+            val stop = sensing.lastStopReason
+            if (state is HeartRateState.Unavailable && !stop.isNullOrBlank()) stop else text
+        }
+
+    /**
+     * Which route produced the number.
+     *
+     * Named rather than hidden: the two routes reach the phone completely differently
+     * and only one of them publishes a confidence value, so a user comparing readings
+     * deserves to know which they are looking at (FR-026, R-10).
+     */
+    fun route(source: HeartRateReading.Source): String =
+        when (source) {
+            HeartRateReading.Source.AAP -> "From the earbuds, over Apple's protocol."
+            HeartRateReading.Source.GATT -> "From the earbuds, over the Bluetooth heart-rate profile."
+        }
+
+    /** What TalkBack says: the state first, the number only inside it. */
+    fun spoken(
+        state: HeartRateState,
+        sensing: HeartRateSensing = HeartRateSensing.Idle,
+    ): String =
+        when (state) {
+            is HeartRateState.Measuring -> "Heart rate, ${state.reading.beatsPerMinute} beats per minute"
+            is HeartRateState.Settling -> "Heart rate, measuring in progress, no reading yet"
+            is HeartRateState.Starting -> "Heart rate, starting the sensor"
+            else -> "Heart rate, ${title(state).lowercase()}"
+        } + ". " + body(state, sensing)
+
+    /** Everything the card can say, for the test that checks none of it is clinical. */
+    fun everySentence(): List<String> {
+        val reading =
+            HeartRateReading(
+                beatsPerMinute = 81,
+                confidence = 205,
+                source = HeartRateReading.Source.AAP,
+                measuredAtEpochMillis = 0L,
+            )
+        val states =
+            listOf(
+                HeartRateState.Measuring(reading),
+                HeartRateState.Measuring(reading.copy(source = HeartRateReading.Source.GATT, confidence = null)),
+                HeartRateState.Settling(0L),
+                HeartRateState.Starting(0L),
+                HeartRateState.Uncertain(0L),
+                HeartRateState.Off,
+                HeartRateState.Unavailable("The earbuds are not being worn."),
+                HeartRateState.Locked("This phone cannot open the Apple protocol channel.", Transport.AAP_L2CAP),
+                HeartRateState.Unsupported("These earbuds have no heart-rate sensor."),
+            )
+        return states.flatMap { state -> listOf(title(state), body(state), spoken(state)) } + UNIT
     }
 }
 

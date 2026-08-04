@@ -1,0 +1,25 @@
+# Eight consecutive heart-rate input reports, report id 1, 18 bytes each.
+#
+# Source: AirPods Pro 3, firmware 81.2675…, Pixel 8, 2026-08-04 — the series recorded
+# in docs/protocol-research.md and specs/003-heart-rate/research.md R-4.
+#
+# VERBATIM: the bpm, confidence, sequence and timestamp columns, the constant status
+# byte 0x02 and the constant vendor tail 00 20 00 00. The 18-byte rows are those
+# columns laid out at the offsets the report descriptor declares — which is the same
+# thing, expressed the way the decoder will meet it.
+#
+# This is the series the whole feature exists to handle correctly: the first four
+# readings are the optical sensor settling and are WRONG — 169 BPM from someone
+# sitting still — and confidence is 20 for exactly those four. Ungated, this capture
+# opens by telling the user their heart rate is 169.
+#
+# Columns: bpm confidence sequence timestamp_ns | report bytes
+
+169  20   0 56339327885000 | 01 A9 14 00 00 02 C8 1E A0 85 3D 33 00 00 00 20 00 00
+147  20   1 56340327882000 | 01 93 14 01 00 02 10 DD 3A C1 3D 33 00 00 00 20 00 00
+128  20   2 56341327878000 | 01 80 14 02 00 02 70 97 D5 FC 3D 33 00 00 00 20 00 00
+ 96  20   3 56342327872000 | 01 60 14 03 00 02 00 4A 70 38 3E 33 00 00 00 20 00 00
+ 94 156   4 56343327870000 | 01 5E 9C 04 00 02 30 0C 0B 74 3E 33 00 00 00 20 00 00
+ 94 205   7 56346327866000 | 01 5E CD 07 00 02 90 5A DB 26 3F 33 00 00 00 20 00 00
+ 91 233  12 56351327804000 | 01 5B E9 0C 00 02 60 5A E0 50 40 33 00 00 00 20 00 00
+ 81 237  23 56362327729000 | 01 51 ED 17 00 02 68 E3 85 E0 42 33 00 00 00 20 00 00

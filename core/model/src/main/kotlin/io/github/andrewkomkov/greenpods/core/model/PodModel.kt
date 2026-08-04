@@ -122,7 +122,11 @@ enum class PodFeature {
     VOLUME_SWIPE,
     HEARING_AID,
 
-    /** Heart rate over AAP control command 0x30. Requires the L2CAP transport. */
+    /**
+     * Heart rate as a HID sensor report over AAP opcode 0x17. Requires the L2CAP
+     * transport. The sensor's service id is discovered from the accessory's own
+     * descriptors, never assumed — see `docs/protocol-research.md`.
+     */
     HEART_RATE_AAP,
 
     /** Heart rate over the standard BLE Heart Rate Profile (0x180D). Works unrooted. */
@@ -141,14 +145,13 @@ enum class PodFeature {
     /**
      * Whether GreenPods can actually *do* this feature once its transport is live.
      *
-     * A transport being open is necessary but not sufficient: the heart-rate sensor on
-     * AirPods Pro 3 can be switched on over the Apple protocol, but its measurement
-     * frame has never been publicly decoded, so there is no number to show. Reporting
-     * that as usable would be a promise the app cannot keep — see
-     * `docs/protocol-research.md`.
+     * A transport being open is necessary but not sufficient. Every feature listed here
+     * currently clears both bars; the property stays because the moment a model is added
+     * with a capability GreenPods can see but not use, reporting it as usable would be a
+     * promise the app cannot keep.
      */
     val isImplemented: Boolean
-        get() = this != HEART_RATE_AAP
+        get() = true
 
     /** Human label. Enum names must never reach the screen. */
     val displayName: String
@@ -213,8 +216,8 @@ enum class PodFeature {
                 }
 
                 HEART_RATE_AAP -> {
-                    "The sensor can be switched on over Apple's protocol, but the " +
-                        "measurement frame is not publicly decoded — so no number is shown."
+                    "Reads the optical sensor over Apple's protocol — no workout and " +
+                        "no Apple device needed."
                 }
 
                 HEART_RATE_GATT -> {

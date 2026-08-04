@@ -7,7 +7,8 @@ import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.transport.TransportGate
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
-import io.github.andrewkomkov.greenpods.core.model.HeartRateSample
+import io.github.andrewkomkov.greenpods.core.model.HeartRateSensing
+import io.github.andrewkomkov.greenpods.core.model.HeartRateState
 import io.github.andrewkomkov.greenpods.core.model.PodModel
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.TransportStatus
@@ -32,6 +33,17 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.update
+
+/**
+ * A decoded AAP message and which accessory it came from.
+ *
+ * The repository folds these into state; the heart-rate session needs to *see* them,
+ * because service discovery and a report arriving are both events rather than states.
+ */
+data class AddressedAapEvent(
+    val address: String,
+    val event: AapEvent,
+)
 
 /**
  * Single source of truth for what GreenPods knows about nearby accessories.
@@ -94,8 +106,19 @@ class PodRepository(
      */
     private val injected = MutableSharedFlow<PodSighting>(extraBufferCapacity = INJECT_BUFFER)
 
+    private val _aapEvents = MutableSharedFlow<AddressedAapEvent>(extraBufferCapacity = AAP_EVENT_BUFFER)
+
     /** Set when the scanner cannot run — Bluetooth off, permission missing, radio busy. */
     val scanFailure: StateFlow<String?> = _scanFailure.asStateFlow()
+
+    /**
+     * Every decoded AAP message, as it arrives.
+     *
+     * Overlay state answers "what is true now"; this answers "what just happened", and
+     * the heart-rate session needs the second. Buffered rather than blocking: a slow
+     * subscriber must never stall the socket reader.
+     */
+    val aapEvents: Flow<AddressedAapEvent> = _aapEvents
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val sighted: Flow<Map<String, PodState>> =
@@ -206,6 +229,30 @@ class PodRepository(
                 )
             }
 
+            // By shape, never by body. This is the one place FR-023 ("no heart rate in
+            // any diagnostic") and Principle IV ("unknown traffic is never dropped")
+            // genuinely collide, and recording *that* a report arrived and what it was —
+            // rather than what it said — is what lets both hold (R-9).
+            is AapEvent.UnhandledHidReport -> {
+                diagnostics.record(
+                    DiagnosticCategory.UNKNOWN_TRAFFIC,
+                    "HID report on service 0x%02X has no decoder".format(event.serviceId),
+                    "report id ${event.reportId}, ${event.length} bytes, ${event.reason}",
+                )
+            }
+
+            is AapEvent.HidServices -> {
+                diagnostics.record(
+                    DiagnosticCategory.TRANSPORT,
+                    "Accessory described ${event.services.size} HID services",
+                    event.services.joinToString { service ->
+                        "0x%02X %s".format(service.id, service.name ?: "unnamed")
+                    },
+                )
+            }
+
+            // AapEvent.HeartRateReport deliberately falls through to nothing. A reading
+            // reaches the controller and the screen; it reaches no log, at any level.
             else -> {
                 Unit
             }
@@ -214,14 +261,24 @@ class PodRepository(
             val existing = current[address] ?: PodOverlay.Empty
             current + (address to existing.reduce(event))
         }
+        _aapEvents.tryEmit(AddressedAapEvent(address, event))
     }
 
-    fun onHeartRate(
+    /**
+     * Publishes what the heart-rate session currently is, and the counts behind it.
+     *
+     * A state, never a sample: the number lives inside [HeartRateState.Measuring] or
+     * nowhere, so a screen, a health-store writer and a diagnostic cannot each decide
+     * for themselves whether a reading is worth showing (AD-3).
+     */
+    fun onHeartRateState(
         address: String,
-        sample: HeartRateSample,
+        state: HeartRateState,
+        sensing: HeartRateSensing,
     ) {
         overlays.update { current ->
-            current + (address to (current[address] ?: PodOverlay.Empty).copy(heartRate = sample))
+            val existing = current[address] ?: PodOverlay.Empty
+            current + (address to existing.copy(heartRate = state, heartRateSensing = sensing))
         }
     }
 
@@ -275,5 +332,11 @@ class PodRepository(
 
         /** Room for a short burst of injected sightings without blocking the caller. */
         const val INJECT_BUFFER = 16
+
+        /**
+         * A second of heart-rate reports plus whatever else the channel says.
+         * Buffered so a slow subscriber drops events rather than stalling the reader.
+         */
+        const val AAP_EVENT_BUFFER = 64
     }
 }

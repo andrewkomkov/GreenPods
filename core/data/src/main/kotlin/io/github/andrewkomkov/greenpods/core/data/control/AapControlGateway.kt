@@ -117,6 +117,25 @@ class AapControlGateway(
         packet: ByteArray,
     ): Boolean = withChannel(address) { session.send(packet) }
 
+    /**
+     * Asks the accessory's heart-rate service to report at [intervalMicros].
+     *
+     * [serviceId] came from the accessory's own descriptors — the session refuses to
+     * write without a feature report id discovered the same way, so there is no path
+     * here that reaches the wire with a guessed id (FR-002).
+     */
+    override suspend fun startHeartRate(
+        address: String,
+        serviceId: Int,
+        intervalMicros: Int,
+    ): Boolean = withChannel(address) { session.startHeartRate(serviceId, intervalMicros) }
+
+    /** Interval zero: the sensor stops in the earbuds, not merely on screen (FR-014). */
+    override suspend fun stopHeartRate(
+        address: String,
+        serviceId: Int,
+    ): Boolean = withChannel(address) { session.stopHeartRate(serviceId) }
+
     private suspend fun withChannel(
         address: String,
         write: suspend () -> Boolean,

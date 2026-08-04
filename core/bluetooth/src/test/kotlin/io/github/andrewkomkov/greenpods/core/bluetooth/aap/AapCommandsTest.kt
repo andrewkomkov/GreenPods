@@ -81,4 +81,60 @@ class AapCommandsTest {
     fun `a single argument applies the same action to both buds`() {
         hex(AapCommands.stemLongPress(StemLongPressAction.NOISE_CONTROL)) shouldBe "04 00 04 00 09 00 16 01 01 00 00"
     }
+
+    @Test
+    fun `the 1 Hz heart-rate start frame matches the capture byte for byte`() {
+        // The frame that was actually sent to AirPods Pro 3 on 2026-08-04 and produced
+        // heart-rate reports one second apart, with no workout running.
+        val packet =
+            HidTransport.setReportInterval(
+                serviceId = 0x13,
+                featureReportId = 1,
+                intervalMicros = 1_000_000,
+            )
+
+        hex(packet) shouldBe
+            "04 00 04 00 17 00 00 00 10 00 0F 00 08 78 42 0B 08 13 10 02 1A 05 01 40 42 0F 00"
+    }
+
+    @Test
+    fun `stopping is the same frame with interval zero`() {
+        // Not a separate command, and not merely hiding the number: interval 0 is the
+        // whole off switch, and it is what makes FR-014 true in the accessory rather
+        // than only on screen.
+        hex(HidTransport.stopReportStream(serviceId = 0x13, featureReportId = 1)) shouldBe
+            "04 00 04 00 17 00 00 00 10 00 0F 00 08 78 42 0B 08 13 10 02 1A 05 01 00 00 00 00"
+    }
+
+    @Test
+    fun `the service id and report id are whatever discovery found`() {
+        // Nothing here defaults. A default service id is a hard-coded service id in a
+        // disguise, and that is how LibrePods' 0x0E came to be silently ignored (FR-002).
+        val packet =
+            HidTransport.setReportInterval(
+                serviceId = 0x2A,
+                featureReportId = 7,
+                intervalMicros = 2_000_000,
+                sequence = 1,
+            )
+
+        hex(packet) shouldBe
+            "04 00 04 00 17 00 00 00 10 00 0F 00 08 01 42 0B 08 2A 10 02 1A 05 07 80 84 1E 00"
+    }
+
+    @Test
+    fun `the declared length always matches the body that follows it`() {
+        listOf(0x13, 0x80, 0x1234).forEach { serviceId ->
+            val packet = HidTransport.setReportInterval(serviceId, featureReportId = 1, intervalMicros = 500_000)
+            val declared = (packet[10].toInt() and 0xFF) or ((packet[11].toInt() and 0xFF) shl 8)
+
+            (packet.size - 12) shouldBe declared
+        }
+    }
+
+    @Test
+    fun `milliseconds become the microseconds the wire wants`() {
+        HidTransport.intervalMicros(1_000) shouldBe 1_000_000
+        HidTransport.intervalMicros(0) shouldBe HidTransport.INTERVAL_STOPPED_MICROS
+    }
 }

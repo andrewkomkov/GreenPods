@@ -7,7 +7,9 @@ import io.github.andrewkomkov.greenpods.core.model.BatteryState
 import io.github.andrewkomkov.greenpods.core.model.ChargeStatus
 import io.github.andrewkomkov.greenpods.core.model.EarDetectionState
 import io.github.andrewkomkov.greenpods.core.model.HeadTrackingSample
-import io.github.andrewkomkov.greenpods.core.model.HeartRateSample
+import io.github.andrewkomkov.greenpods.core.model.HeartRateReading
+import io.github.andrewkomkov.greenpods.core.model.HeartRateSensing
+import io.github.andrewkomkov.greenpods.core.model.HeartRateState
 import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 import io.github.andrewkomkov.greenpods.core.model.PodModel
 import io.github.andrewkomkov.greenpods.core.model.PodState
@@ -93,12 +95,27 @@ class PodOverlayTest {
     }
 
     @Test
-    fun `heart rate is carried without touching anything else`() {
-        val overlay = PodOverlay.Empty.copy(heartRate = HeartRateSample(72, HeartRateSample.Source.GATT))
+    fun `heart rate is carried as a state without touching anything else`() {
+        val reading =
+            HeartRateReading(
+                beatsPerMinute = 72,
+                confidence = null,
+                source = HeartRateReading.Source.GATT,
+                measuredAtEpochMillis = 1L,
+            )
+        val overlay =
+            PodOverlay.Empty.copy(
+                heartRate = HeartRateState.Measuring(reading),
+                heartRateSensing = HeartRateSensing(enabled = true, trustedCount = 1),
+            )
 
         val applied = overlay.applyTo(pod)
 
-        applied.heartRate?.beatsPerMinute shouldBe 72
+        // The overlay carries what the session published. Whether it may be *shown* is
+        // PodState.heartRate's job, and this pod's transports do not carry heart rate at
+        // all — which is why the session state is asserted rather than the gated one.
+        applied.heartRateSession.trustedReading?.beatsPerMinute shouldBe 72
+        applied.heartRateSensing.trustedCount shouldBe 1
         applied.noiseControlMode shouldBe NoiseControlMode.OFF
     }
 }

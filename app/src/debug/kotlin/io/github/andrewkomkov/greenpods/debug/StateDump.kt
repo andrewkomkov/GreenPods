@@ -55,7 +55,9 @@ object StateDump {
             "noiseControlMode" to (pod.noiseControlMode?.name?.let(::str) ?: "null"),
             "conversationalAwareness" to (pod.conversationalAwarenessEnabled?.toString() ?: "null"),
             "adaptiveNoiseStrength" to (pod.adaptiveNoiseStrength?.toString() ?: "null"),
-            "heartRateBpm" to (pod.heartRate?.beatsPerMinute?.toString() ?: "null"),
+            // State and counters, never a value. The field this replaced printed BPM,
+            // which put a heart rate in every bug report anyone pasted (FR-023, FR-028).
+            "heartRate" to heartRate(pod),
             "transports" to
                 array(
                     pod.transportStatuses.map { status ->
@@ -75,6 +77,27 @@ object StateDump {
                 ),
         )
 
+    /**
+     * The sensing story with no number in it.
+     *
+     * `trusted` is here on purpose: SC-009 is checked by comparing it against the health
+     * store's own sample count, which is a count against a count and never a reading.
+     */
+    private fun heartRate(pod: PodState): String {
+        val sensing = pod.heartRateSensing
+        return obj(
+            "state" to str(pod.heartRate.stateName),
+            "enabled" to sensing.enabled.toString(),
+            "source" to (sensing.source?.name?.let(::str) ?: "null"),
+            "serviceId" to (sensing.serviceId?.let { str("0x%02X".format(it)) } ?: "null"),
+            "requestedIntervalMicros" to (sensing.requestedIntervalMicros?.toString() ?: "null"),
+            "reportsReceived" to sensing.reportsReceived.toString(),
+            "trustedCount" to sensing.trustedCount.toString(),
+            "discardedImplausible" to sensing.discardedImplausible.toString(),
+            "lastStopReason" to (sensing.lastStopReason?.let(::str) ?: "null"),
+        )
+    }
+
     private fun battery(component: BatteryComponent): String =
         obj(
             "percent" to (component.levelPercent?.toString() ?: "null"),
@@ -91,6 +114,10 @@ object StateDump {
             "lowBatteryThresholdPercent" to settings.lowBatteryThresholdPercent.toString(),
             "scanMode" to str(settings.scanMode.name),
             "headGesturesEnabled" to settings.headGesturesEnabled.toString(),
+            "heartRateEnabled" to settings.heartRateEnabled.toString(),
+            "heartRateHealthConnectEnabled" to settings.heartRateHealthConnectEnabled.toString(),
+            "heartRateIntervalMillis" to settings.heartRateIntervalMillis.toString(),
+            "heartRateConfidenceThreshold" to settings.heartRateConfidenceThreshold.toString(),
             "gestureBindings" to
                 array(
                     settings.gestureBindings.map { binding ->

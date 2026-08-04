@@ -106,24 +106,6 @@ data class HeadTrackingSample(
     val verticalAcceleration: Short,
 )
 
-/**
- * A heart-rate reading and where it came from.
- *
- * [Source.GATT] is the standard Bluetooth SIG Heart Rate Profile and is the only
- * source obtainable on an unrooted device; Powerbeats Pro 2 is currently the sole
- * Apple-family model that broadcasts it.
- *
- * [Source.AAP] is reachable in principle over L2CAP — the sensor is toggled with
- * control command 0x30 — but the measurement frame layout is not publicly
- * reverse-engineered yet, so no decoder ships for it.
- */
-data class HeartRateSample(
-    val beatsPerMinute: Int,
-    val source: Source,
-) {
-    enum class Source { GATT, AAP }
-}
-
 /** Everything GreenPods currently knows about one accessory. */
 data class PodState(
     val address: String,
@@ -134,7 +116,19 @@ data class PodState(
     val noiseControlMode: NoiseControlMode? = null,
     val conversationalAwarenessEnabled: Boolean? = null,
     val adaptiveNoiseStrength: Int? = null,
-    val heartRate: HeartRateSample? = null,
+    /**
+     * What the heart-rate session last published.
+     *
+     * Read [heartRate] instead of this in the UI: a session's state only means
+     * anything once the model has a sensor *and* a live transport can reach it, and
+     * [heartRate] is what applies that gate.
+     */
+    val heartRateSession: HeartRateState = HeartRateState.Off,
+    /**
+     * Counts and reasons, never values. This is what the state dump and `hr status`
+     * print, which is why it is a separate type from the state (FR-028).
+     */
+    val heartRateSensing: HeartRateSensing = HeartRateSensing.Idle,
     val rssi: Int? = null,
     /**
      * Transports currently live for this accessory. These are independent, not a
@@ -164,6 +158,36 @@ data class PodState(
     val gatedFeatures: Set<PodFeature>
         get() = model.features - usableFeatures
 
+    /**
+     * Which heart-rate route this accessory offers, preferring one that is actually
+     * reachable right now. Null when the model has no sensor of either kind.
+     *
+     * The two routes are listed in preference order rather than merged: FR-004 forbids
+     * blending them, and picking one is not the same as falling back between them —
+     * whichever is chosen, the reading it produces records its own source.
+     */
+    val heartRateFeature: PodFeature?
+        get() =
+            HEART_RATE_ROUTES.firstOrNull { it in usableFeatures }
+                ?: HEART_RATE_ROUTES.firstOrNull { it in model.features }
+
+    /**
+     * Heart rate as the screen must show it, with the transport gate already applied.
+     *
+     * SC-008's two cases are two states here, not two strings the UI assembles:
+     * [HeartRateState.Unsupported] is a fact about the earbuds, [HeartRateState.Locked]
+     * a fact about this phone, and neither can be mistaken for the other or for a
+     * session that is simply switched off.
+     */
+    val heartRate: HeartRateState
+        get() {
+            val route = heartRateFeature ?: return HeartRateState.Unsupported(NO_SENSOR_REASON)
+            if (route !in usableFeatures) {
+                return HeartRateState.Locked(reasonFor(route), route.requiredTransport)
+            }
+            return heartRateSession
+        }
+
     fun statusOf(transport: Transport): TransportStatus =
         transportStatuses.firstOrNull { it.transport == transport }
             ?: TransportStatus.notProbed(transport)
@@ -179,5 +203,12 @@ data class PodState(
 
         val status = statusOf(feature.requiredTransport)
         return status.reason.ifBlank { "Needs the ${feature.requiredTransport.displayName} transport." }
+    }
+
+    private companion object {
+        /** AAP first: it is the route more models have, and the one that carries confidence. */
+        val HEART_RATE_ROUTES = listOf(PodFeature.HEART_RATE_AAP, PodFeature.HEART_RATE_GATT)
+
+        const val NO_SENSOR_REASON = "These earbuds have no heart-rate sensor."
     }
 }

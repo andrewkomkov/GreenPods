@@ -1,5 +1,6 @@
 package io.github.andrewkomkov.greenpods.core.data.control
 
+import io.github.andrewkomkov.greenpods.core.data.heartrate.HeartRateController
 import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 
 /**
@@ -13,7 +14,7 @@ import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
  * An interface because the view models must be testable without a Bluetooth stack, and
  * because a device that *can* open the channel is not available to test against.
  */
-interface PodControlGateway {
+interface PodControlGateway : HeartRateController.HeartRateCommands {
     suspend fun setNoiseControlMode(
         address: String,
         mode: NoiseControlMode,

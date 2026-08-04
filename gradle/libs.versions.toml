@@ -8,6 +8,8 @@ lifecycle = "2.11.0"
 navigation = "2.9.8"
 datastore = "1.2.1"
 core = "1.19.0"
+# minSdk 26 — the same floor GreenPods already has, so adding it excludes no device.
+healthConnect = "1.1.0"
 okhttp = "5.4.0"
 junit = "4.13.2"
 kotest = "6.2.3"
@@ -30,6 +32,7 @@ androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-
 androidx-lifecycle-service = { module = "androidx.lifecycle:lifecycle-service", version.ref = "lifecycle" }
 androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+health-connect = { module = "androidx.health.connect:connect-client", version.ref = "healthConnect" }
 
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-material3 = { module = "androidx.compose.material3:material3" }

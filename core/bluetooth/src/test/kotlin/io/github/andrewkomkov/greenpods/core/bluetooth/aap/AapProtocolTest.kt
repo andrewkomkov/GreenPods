@@ -15,6 +15,11 @@ import org.junit.Test
  * decoder is pinned against them rather than against hand-written examples.
  */
 class AapProtocolTest {
+    // The decoder is per-session now: opcode 0x17 carries several HID services at once
+    // and which service a report belongs to is only knowable from descriptors sent
+    // earlier on the same channel.
+    private val decoder = AapDecoder()
+
     private fun bytes(hex: String): ByteArray =
         hex
             .split(" ")
@@ -47,7 +52,7 @@ class AapProtocolTest {
         // The source doc's worked example labels 0x02 as "Left", contradicting its own
         // table; the table wins here. Worth re-confirming against a real device.
         val event =
-            AapDecoder.decode(
+            decoder.decode(
                 bytes("04 00 04 00 04 00 03 02 01 64 02 01 04 01 63 01 01 08 01 11 02 01"),
             )
 
@@ -62,15 +67,15 @@ class AapProtocolTest {
 
     @Test
     fun `noise control notification maps wire values to modes`() {
-        AapDecoder
+        decoder
             .decode(bytes("04 00 04 00 09 00 0D 01 00 00 00"))
             .shouldBeInstanceOf<AapEvent.NoiseControl>()
             .mode shouldBe NoiseControlMode.OFF
-        AapDecoder
+        decoder
             .decode(bytes("04 00 04 00 09 00 0D 02 00 00 00"))
             .shouldBeInstanceOf<AapEvent.NoiseControl>()
             .mode shouldBe NoiseControlMode.NOISE_CANCELLATION
-        AapDecoder
+        decoder
             .decode(bytes("04 00 04 00 09 00 0D 04 00 00 00"))
             .shouldBeInstanceOf<AapEvent.NoiseControl>()
             .mode shouldBe NoiseControlMode.ADAPTIVE
@@ -79,7 +84,7 @@ class AapProtocolTest {
     @Test
     fun `ear detection reports both buds`() {
         val state =
-            AapDecoder
+            decoder
                 .decode(bytes("04 00 04 00 06 00 00 02"))
                 .shouldBeInstanceOf<AapEvent.EarDetection>()
                 .state
@@ -92,15 +97,15 @@ class AapProtocolTest {
 
     @Test
     fun `conversational awareness state and level use different opcodes`() {
-        AapDecoder
+        decoder
             .decode(bytes("04 00 04 00 09 00 28 01 00 00 00"))
             .shouldBeInstanceOf<AapEvent.ConversationalAwarenessState>()
             .enabled shouldBe true
-        AapDecoder
+        decoder
             .decode(bytes("04 00 04 00 09 00 28 02 00 00 00"))
             .shouldBeInstanceOf<AapEvent.ConversationalAwarenessState>()
             .enabled shouldBe false
-        AapDecoder
+        decoder
             .decode(bytes("04 00 04 00 4B 00 02 00 01 03"))
             .shouldBeInstanceOf<AapEvent.ConversationalAwarenessLevel>()
             .level shouldBe 3
@@ -108,7 +113,7 @@ class AapProtocolTest {
 
     @Test
     fun `adaptive noise strength is clamped to the documented 0-100 range`() {
-        AapDecoder
+        decoder
             .decode(bytes("04 00 04 00 09 00 2E 64 00 00 00"))
             .shouldBeInstanceOf<AapEvent.AdaptiveNoiseStrength>()
             .level shouldBe 100
@@ -116,7 +121,7 @@ class AapProtocolTest {
 
     @Test
     fun `recognised control commands without a typed model are surfaced, not dropped`() {
-        val event = AapDecoder.decode(bytes("04 00 04 00 09 00 30 01 00 00 00"))
+        val event = decoder.decode(bytes("04 00 04 00 09 00 30 01 00 00 00"))
 
         // HRM_STATE is understood as an identifier but has no decoder yet; it must
         // still reach diagnostics rather than vanish.
@@ -125,7 +130,7 @@ class AapProtocolTest {
 
     @Test
     fun `unknown traffic is preserved verbatim`() {
-        AapDecoder.decode(bytes("04 00 04 00 EE 00 01 02")).shouldBeInstanceOf<AapEvent.Unknown>()
+        decoder.decode(bytes("04 00 04 00 EE 00 01 02")).shouldBeInstanceOf<AapEvent.Unknown>()
     }
 
     @Test
@@ -144,12 +149,84 @@ class AapProtocolTest {
     }
 
     @Test
+    fun `a descriptor frame is no longer decoded as a head-tracking sample`() {
+        // The defect this replaces: every 0x17 packet of 55 bytes or more went to the
+        // head-tracking decoder, which reads fixed offsets 43..53. The captured
+        // descriptor frame is 961 bytes, so it was decoded as a head pose made of
+        // garbage — and nothing noticed, because head gestures are off by default (R-3).
+        val event = decoder.decode(AapFixtures.descriptorFrame)
+
+        val services = event.shouldBeInstanceOf<AapEvent.HidServices>().services
+        services.map(HidService::id) shouldBe listOf(0x10, 0x11, 0x12, 0x13)
+        decoder.discoveredHeartRateServiceId shouldBe 0x13
+        decoder.canMeasureHeartRate shouldBe true
+    }
+
+    @Test
+    fun `the readiness list decodes as readiness, not as a pose`() {
+        decoder
+            .decode(AapFixtures.readyFrame)
+            .shouldBeInstanceOf<AapEvent.HidServicesReady>()
+            .serviceIds shouldBe listOf(0x10, 0x11, 0x12, 0x13)
+    }
+
+    @Test
+    fun `a heart-rate report is routed by its service id once descriptors have arrived`() {
+        decoder.decode(AapFixtures.descriptorFrame)
+        val report = AapFixtures.heartRateSeries.last().report
+
+        val event =
+            decoder
+                .decode(AapFixtures.inputReportFrame(serviceId = 0x13, report = report))
+                .shouldBeInstanceOf<AapEvent.HeartRateReport>()
+
+        event.serviceId shouldBe 0x13
+        event.reading.beatsPerMinute shouldBe 81
+        event.reading.confidence shouldBe 237
+    }
+
+    @Test
+    fun `a report on a service with no decoder is surfaced by shape and never by body`() {
+        decoder.decode(AapFixtures.descriptorFrame)
+
+        val event =
+            decoder
+                .decode(AapFixtures.inputReportFrame(serviceId = 0x11, report = byteArrayOf(0x01, 0x63, 0x44)))
+                .shouldBeInstanceOf<AapEvent.UnhandledHidReport>()
+
+        event.serviceId shouldBe 0x11
+        event.reportId shouldBe 1
+        event.length shouldBe 3
+    }
+
+    @Test
+    fun `head tracking still decodes once its service is known`() {
+        decoder.decode(AapFixtures.descriptorFrame)
+        // A frame on the devmotion service, long enough for the pose offsets the
+        // head-tracking decoder still reads absolutely.
+        val pose = ByteArray(40) { (it + 1).toByte() }
+
+        decoder
+            .decode(AapFixtures.inputReportFrame(serviceId = 0x10, report = pose))
+            .shouldBeInstanceOf<AapEvent.HeadTracking>()
+    }
+
+    @Test
+    fun `a session reset forgets the services it discovered`() {
+        decoder.decode(AapFixtures.descriptorFrame)
+        decoder.resetSession()
+
+        decoder.discoveredHeartRateServiceId shouldBe null
+        decoder.canMeasureHeartRate shouldBe false
+    }
+
+    @Test
     fun `device info splits the null-terminated string table`() {
         val packet =
             bytes("04 00 04 00 1D 00") +
                 "AirPods Pro\u0000A3048\u0000Apple Inc.\u0000QXNRHHYXP6\u0000".toByteArray()
 
-        val fields = AapDecoder.decode(packet).shouldBeInstanceOf<AapEvent.DeviceInfo>().fields
+        val fields = decoder.decode(packet).shouldBeInstanceOf<AapEvent.DeviceInfo>().fields
         fields.shouldNotBeNull()
         fields shouldBe listOf("AirPods Pro", "A3048", "Apple Inc.", "QXNRHHYXP6")
     }

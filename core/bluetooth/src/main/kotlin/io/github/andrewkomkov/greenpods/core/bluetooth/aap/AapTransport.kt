@@ -72,6 +72,106 @@ sealed interface AapAvailability {
 }
 
 /**
+ * Turns whatever a socket read happened to return into whole AAP frames.
+ *
+ * `read()` returns bytes, not messages. Until this existed the transport emitted one
+ * packet per read and hoped they lined up — which they did, right up to the point where
+ * they would not: the 2026-08-04 capture saw a 996-byte descriptor frame against a
+ * 1024-byte buffer, so one extra service on some future model splits a frame and every
+ * decoder downstream silently misparses it. Nothing throws in that world; the numbers
+ * are just wrong.
+ *
+ * Only opcode `0x17` declares its own length — a 16-bit little-endian count at offset 10
+ * covering the protobuf body, so a whole frame is `12 + length` bytes. Every other opcode
+ * carries no length at all, so for those this does what the transport always did and
+ * emits what arrived. Guessing at boundaries for them by hunting for the next header
+ * would split a payload that happened to contain `04 00 04 00`, which is a worse failure
+ * than the one being fixed.
+ *
+ * Pure and stateful-by-instance, so the interesting cases — a frame in two halves, two
+ * frames in one read, a length that could not possibly be right — are unit-testable
+ * without a socket.
+ */
+internal class AapFrameReassembler(
+    /**
+     * Beyond this a declared length is not a long frame, it is a misparse. Surfacing the
+     * bytes is then better than buffering forever waiting for a frame that will never
+     * complete.
+     */
+    private val maxFrameBytes: Int = MAX_FRAME_BYTES,
+) {
+    private var pending: ByteArray = ByteArray(0)
+
+    /** Feeds [length] bytes from [chunk] in, and returns every whole frame now available. */
+    fun offer(
+        chunk: ByteArray,
+        length: Int = chunk.size,
+    ): List<ByteArray> {
+        pending = if (pending.isEmpty()) chunk.copyOf(length) else pending + chunk.copyOf(length)
+
+        val frames = mutableListOf<ByteArray>()
+        while (true) {
+            val frame = takeFrame() ?: break
+            frames += frame
+        }
+        return frames
+    }
+
+    /** Drops anything half-received. Called when the channel goes away. */
+    fun reset() {
+        pending = ByteArray(0)
+    }
+
+    /** Whatever is buffered and not yet a whole frame. Only interesting to tests. */
+    val bufferedBytes: Int get() = pending.size
+
+    private fun takeFrame(): ByteArray? {
+        if (pending.size < OPCODE_END) return null
+
+        // Not our framing at all. Hand it on rather than dropping it — it becomes
+        // AapEvent.Unknown, which is where unrecognised traffic belongs (Principle IV).
+        if (!pending.copyOfRange(0, 4).contentEquals(AapProtocol.HEADER)) return drain()
+
+        val opcode = (pending[4].toInt() and 0xFF) or ((pending[5].toInt() and 0xFF) shl 8)
+        if (opcode != Opcode.HEAD_TRACKING.value) return drain()
+
+        if (pending.size < BODY_OFFSET) return null
+        val declared =
+            (pending[LENGTH_OFFSET].toInt() and 0xFF) or ((pending[LENGTH_OFFSET + 1].toInt() and 0xFF) shl 8)
+        val total = BODY_OFFSET + declared
+        if (total > maxFrameBytes) return drain()
+        if (pending.size < total) return null
+
+        val frame = pending.copyOfRange(0, total)
+        pending = pending.copyOfRange(total, pending.size)
+        return frame
+    }
+
+    private fun drain(): ByteArray? {
+        if (pending.isEmpty()) return null
+        val all = pending
+        pending = ByteArray(0)
+        return all
+    }
+
+    private companion object {
+        const val OPCODE_END = 6
+
+        /** Header, opcode and the 4-byte `00 00 10 00` prefix. */
+        const val LENGTH_OFFSET = 10
+        const val BODY_OFFSET = 12
+
+        /**
+         * The declared length is 16 bits, so 65 535 is expressible — but the largest frame
+         * ever observed was 996 bytes and the largest single report the accessory declares
+         * is 601. Eight kilobytes is generous by an order of magnitude and still small
+         * enough that a misparse is caught in one read rather than buffered.
+         */
+        const val MAX_FRAME_BYTES = 8_192
+    }
+}
+
+/**
  * Apple Accessory Protocol client.
  *
  * Opens an L2CAP channel on PSM [AapProtocol.PSM], performs the handshake, and
@@ -184,6 +284,7 @@ class AapTransport(
             output.flush()
             ready.value = true
 
+            val reassembler = AapFrameReassembler()
             val reader =
                 CoroutineScope(ioDispatcher).launch {
                     val buffer = ByteArray(READ_BUFFER_BYTES)
@@ -191,9 +292,10 @@ class AapTransport(
                         while (true) {
                             val read = bluetoothSocket.inputStream.read(buffer)
                             if (read <= 0) break
-                            val packet = buffer.copyOf(read)
-                            logFrame("rx", packet)
-                            trySend(packet)
+                            reassembler.offer(buffer, read).forEach { frame ->
+                                logFrame("rx", frame)
+                                trySend(frame)
+                            }
                         }
                     } catch (e: IOException) {
                         Log.d(TAG, "AAP channel closed: ${e.message}")
@@ -204,6 +306,7 @@ class AapTransport(
             awaitClose {
                 ready.value = false
                 reader.cancel()
+                reassembler.reset()
                 runCatching { bluetoothSocket.close() }
                 socket = null
             }
@@ -331,7 +434,14 @@ class AapTransport(
 
     private companion object {
         const val TAG = "AapTransport"
-        const val READ_BUFFER_BYTES = 1024
+
+        /**
+         * Four times the largest frame observed (996 bytes, three service descriptors).
+         * Reassembly means an undersized buffer is now a performance detail rather than a
+         * correctness one, but sitting 28 bytes under the old 1024 was too close to read
+         * as deliberate.
+         */
+        const val READ_BUFFER_BYTES = 4096
 
         /**
          * How long a write waits for the channel. Generous, because opening it involves a

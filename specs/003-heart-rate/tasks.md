@@ -19,9 +19,9 @@ the requirement it satisfies, so the gate stays traceable.
 
 **Purpose**: Build configuration only. Nothing here changes behaviour.
 
-- [ ] T001 Add `healthConnect = "1.1.0"` and `health-connect = { module = "androidx.health.connect:connect-client", version.ref = "healthConnect" }` to `gradle/libs.versions.toml` — R-5
-- [ ] T002 Add `implementation(libs.health.connect)` to `core/data/build.gradle.kts` — keep it `implementation`, not `api`: no Health Connect type may cross a module boundary — R-5, R-7, AD-11
-- [ ] T003 [P] Add `implementation(libs.androidx.activity.compose)` to `feature/settings/build.gradle.kts` so the permission contract — typed `ActivityResultContract<Set<String>, Set<String>>` — can be launched without linking Health Connect — FR-017, AD-11
+- [X] T001 Add `healthConnect = "1.1.0"` and `health-connect = { module = "androidx.health.connect:connect-client", version.ref = "healthConnect" }` to `gradle/libs.versions.toml` — R-5
+- [X] T002 Add `implementation(libs.health.connect)` to `core/data/build.gradle.kts` — keep it `implementation`, not `api`: no Health Connect type may cross a module boundary — R-5, R-7, AD-11
+- [X] T003 [P] Add `implementation(libs.androidx.activity.compose)` to `feature/settings/build.gradle.kts` so the permission contract — typed `ActivityResultContract<Set<String>, Set<String>>` — can be launched without linking Health Connect — FR-017, AD-11
 
 ---
 
@@ -36,29 +36,29 @@ existing defect rather than fix it.
 
 ### Model types
 
-- [ ] T004 [P] Create `HeartRateReading` (bpm, confidence, source, measuredAtEpochMillis, sequence) in `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/HeartRate.kt`, replacing `HeartRateSample`; reject BPM outside 25..250 at construction; `measuredAtEpochMillis` is always a resolved wall-clock time, never the raw report counter — FR-005, FR-009, AD-10
-- [ ] T005 [P] Create the `HeartRateState` sealed hierarchy and `HeartRateSensing` counters in `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/HeartRateState.kt`, with `Measuring` as the only variant carrying a reading — FR-006, FR-008, FR-020, FR-027, FR-028
-- [ ] T006 Replace `heartRate: HeartRateSample?` with `heartRate: HeartRateState` in `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/PodState.kt` (depends on T004, T005) — FR-026
-- [ ] T007 [P] Set `PodFeature.HEART_RATE_AAP.isImplemented = true` and rewrite its `explanation` in `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/PodModel.kt` — FR-001, FR-027
-- [ ] T008 [P] Add `heartRateEnabled`, `heartRateHealthConnectEnabled`, `heartRateIntervalMillis`, `heartRateConfidenceThreshold` with their defaults and `sanitised()` clamps to `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/Settings.kt` — FR-011, FR-017
-- [ ] T009 Add `HeartRateStateTest` in `core/model/src/test/kotlin/io/github/andrewkomkov/greenpods/core/model/HeartRateStateTest.kt` proving no state but `Measuring` can yield a number and that an implausible reading is not constructible (depends on T004–T006) — FR-006, FR-007, FR-009
+- [X] T004 [P] Create `HeartRateReading` (bpm, confidence, source, measuredAtEpochMillis, sequence) in `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/HeartRate.kt`, replacing `HeartRateSample`; reject BPM outside 25..250 at construction; `measuredAtEpochMillis` is always a resolved wall-clock time, never the raw report counter — FR-005, FR-009, AD-10
+- [X] T005 [P] Create the `HeartRateState` sealed hierarchy and `HeartRateSensing` counters in `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/HeartRateState.kt`, with `Measuring` as the only variant carrying a reading — FR-006, FR-008, FR-020, FR-027, FR-028
+- [X] T006 Replace `heartRate: HeartRateSample?` with `heartRate: HeartRateState` in `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/PodState.kt` (depends on T004, T005) — FR-026
+- [X] T007 [P] Set `PodFeature.HEART_RATE_AAP.isImplemented = true` and rewrite its `explanation` in `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/PodModel.kt` — FR-001, FR-027
+- [X] T008 [P] Add `heartRateEnabled`, `heartRateHealthConnectEnabled`, `heartRateIntervalMillis`, `heartRateConfidenceThreshold` with their defaults and `sanitised()` clamps to `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/Settings.kt` — FR-011, FR-017
+- [X] T009 Add `HeartRateStateTest` in `core/model/src/test/kotlin/io/github/andrewkomkov/greenpods/core/model/HeartRateStateTest.kt` proving no state but `Measuring` can yield a number and that an implausible reading is not constructible (depends on T004–T006) — FR-006, FR-007, FR-009
 
 ### Captured fixtures
 
-- [ ] T010 [P] Add the 2026-08-04 capture as test fixtures in `core/bluetooth/src/test/resources/aap/hid-descriptors.txt`, `hr-report-descriptor.txt` and `hr-report-series.txt`, taken verbatim from [contracts/aap-hid.md](./contracts/aap-hid.md) with the source recorded in a header comment — Principle III
+- [X] T010 [P] Add the 2026-08-04 capture as test fixtures in `core/bluetooth/src/test/resources/aap/hid-descriptors.txt`, `hr-report-descriptor.txt` and `hr-report-series.txt`, taken verbatim from [contracts/aap-hid.md](./contracts/aap-hid.md) with the source recorded in a header comment — Principle III
 
 ### The `0x17` defects
 
-- [ ] T011 Add length-aware frame reassembly (16-bit length at offset 10) and raise `READ_BUFFER_BYTES` in `core/bluetooth/src/main/kotlin/io/github/andrewkomkov/greenpods/core/bluetooth/aap/AapTransport.kt`, so decoders always see whole frames — R-3, AD-6
-- [ ] T012 Add `AapFramingTest` in `core/bluetooth/src/test/kotlin/io/github/andrewkomkov/greenpods/core/bluetooth/aap/AapFramingTest.kt` covering a frame split across two reads, two frames in one read, and a declared length beyond the buffer (depends on T011) — R-3
-- [ ] T013 Dispatch `Opcode.HEAD_TRACKING` (`0x17`) on protobuf field — 5 descriptors, 7 input reports, 12 readiness — instead of packet length, and recognise head tracking by its service id, in `core/bluetooth/src/main/kotlin/io/github/andrewkomkov/greenpods/core/bluetooth/aap/AapDecoder.kt` — R-3, AD-5
-- [ ] T014 Extend `core/bluetooth/src/test/kotlin/io/github/andrewkomkov/greenpods/core/bluetooth/aap/AapProtocolTest.kt` with a case proving a descriptor frame is no longer decoded as a head-tracking sample, and confirm `HeadGestureTest` still passes (depends on T010, T013) — Principle III, Risk "0x17 dispatch touches head tracking"
+- [X] T011 Add length-aware frame reassembly (16-bit length at offset 10) and raise `READ_BUFFER_BYTES` in `core/bluetooth/src/main/kotlin/io/github/andrewkomkov/greenpods/core/bluetooth/aap/AapTransport.kt`, so decoders always see whole frames — R-3, AD-6
+- [X] T012 Add `AapFramingTest` in `core/bluetooth/src/test/kotlin/io/github/andrewkomkov/greenpods/core/bluetooth/aap/AapFramingTest.kt` covering a frame split across two reads, two frames in one read, and a declared length beyond the buffer (depends on T011) — R-3
+- [X] T013 Dispatch `Opcode.HEAD_TRACKING` (`0x17`) on protobuf field — 5 descriptors, 7 input reports, 12 readiness — instead of packet length, and recognise head tracking by its service id, in `core/bluetooth/src/main/kotlin/io/github/andrewkomkov/greenpods/core/bluetooth/aap/AapDecoder.kt` — R-3, AD-5
+- [X] T014 Extend `core/bluetooth/src/test/kotlin/io/github/andrewkomkov/greenpods/core/bluetooth/aap/AapProtocolTest.kt` with a case proving a descriptor frame is no longer decoded as a head-tracking sample, and confirm `HeadGestureTest` still passes (depends on T010, T013) — Principle III, Risk "0x17 dispatch touches head tracking"
 
 ### Privacy floor
 
-- [ ] T015 Remove the `heartRateBpm` field from `app/src/debug/kotlin/io/github/andrewkomkov/greenpods/debug/StateDump.kt` and emit a `heartRate` object carrying state name and `HeartRateSensing` counters instead — FR-023, FR-028
-- [ ] T016 Add a case to `app/src/test/kotlin/io/github/andrewkomkov/greenpods/debug/StateDumpTest.kt` asserting the rendered dump contains no BPM value for a pod in `Measuring` (depends on T015) — FR-023, SC-005
-- [ ] T017 Carry `HeartRateState` through `core/data/src/main/kotlin/io/github/andrewkomkov/greenpods/core/data/PodOverlay.kt` and `PodRepository.kt`, replacing the `HeartRateSample` overlay field, and update `core/data/src/test/kotlin/io/github/andrewkomkov/greenpods/core/data/PodOverlayTest.kt` which references the old type; `grep -rn HeartRateSample` must come back empty when done (depends on T006) — FR-026
+- [X] T015 Remove the `heartRateBpm` field from `app/src/debug/kotlin/io/github/andrewkomkov/greenpods/debug/StateDump.kt` and emit a `heartRate` object carrying state name and `HeartRateSensing` counters instead — FR-023, FR-028
+- [X] T016 Add a case to `app/src/test/kotlin/io/github/andrewkomkov/greenpods/debug/StateDumpTest.kt` asserting the rendered dump contains no BPM value for a pod in `Measuring` (depends on T015) — FR-023, SC-005
+- [X] T017 Carry `HeartRateState` through `core/data/src/main/kotlin/io/github/andrewkomkov/greenpods/core/data/PodOverlay.kt` and `PodRepository.kt`, replacing the `HeartRateSample` overlay field, and update `core/data/src/test/kotlin/io/github/andrewkomkov/greenpods/core/data/PodOverlayTest.kt` which references the old type; `grep -rn HeartRateSample` must come back empty when done (depends on T006) — FR-026
 
 **Checkpoint**: the state types exist, `0x17` is dispatched honestly, and no path can print a
 heart rate. Stories can start.

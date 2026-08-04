@@ -85,6 +85,23 @@ class ControlsViewModelTest {
             writes += "cycle=${modes.map { it.name }.sorted()}"
             return accepts
         }
+
+        override suspend fun startHeartRate(
+            address: String,
+            serviceId: Int,
+            intervalMicros: Int,
+        ): Boolean {
+            writes += "hrStart=$serviceId@$intervalMicros"
+            return accepts
+        }
+
+        override suspend fun stopHeartRate(
+            address: String,
+            serviceId: Int,
+        ): Boolean {
+            writes += "hrStop=$serviceId"
+            return accepts
+        }
     }
 
     private fun sighting(model: PodModel) =
