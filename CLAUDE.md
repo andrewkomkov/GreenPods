@@ -63,20 +63,40 @@ entirely on which are live:
 |---|---|---|
 | `BLE_ADVERTISEMENT` | Always | Battery, charging, in-ear/in-case, lid counter. Read-only. |
 | `GATT` | Always | Heart rate — Powerbeats Pro 2 only. |
-| `AAP_L2CAP` | **Usually not** | Everything else: noise control, gestures, CA, head tracking, rename. All writes. |
+| `AAP_L2CAP` | **Yes, on recent Android** | Everything else: noise control, gestures, CA, head tracking, rename. All writes. |
 
-`AAP_L2CAP` needs an L2CAP channel on PSM `0x1001`. Android's public
-`createInsecureL2capChannel` rejects any PSM ≥ `0x0100`, and the hidden
-`createInsecureL2capSocket` gets refused by real AirPods on most stacks. It
-generally requires a Magisk module or Xposed hook — which this project does not
-ship, because it targets unrooted devices.
+`AAP_L2CAP` needs an L2CAP channel on PSM `0x1001`, and three things have to be
+right at once. Getting any one of them wrong looks exactly like "the stack refuses
+this and you need root", which is what this file claimed until it was tested:
+
+1. **The channel must be secure.** `createInsecureL2capChannel` builds an
+   unauthenticated, unencrypted channel. AirPods accept it and then never bring it
+   up — the connect succeeds and the first read returns -1. The channel they want is
+   `auth = true, encrypt = true` carrying Apple's service UUID
+   `74ec2172-0bad-4d01-8f77-997b2be0722a`.
+2. **No public API builds that channel.** Only a hidden `BluetoothSocket`
+   constructor does, and its signature has been reshuffled across releases, so
+   `AapTransport` tries the known forms in turn.
+3. **That constructor is on the non-SDK blocklist**, so reflection is denied
+   outright. `HiddenApiAccess` lifts the restriction for `android.bluetooth` only.
+   This is the part that actually gates everything, and it needs no root.
+
+Verified on a stock, unrooted Pixel 8 (Android 17) against AirPods Pro 3: channel
+open, full configuration read back, listening mode written and echoed.
 
 **Consequences for any change you make:**
 
 - Never assume the AAP transport is available. Probe it (`AapTransport.probe()`)
-  and branch on the result.
+  and branch on the result. It working on current Android is not a promise about
+  older builds, other OEMs, or the next release moving the constructor again.
 - Failure to open the channel is a **normal outcome**, not an error to report as a
   crash or a bug.
+- A **live session outranks a probe**. `TransportGate.recordChannelOpen` is how a
+  running `AapControlGateway` reports the channel; a stale failed probe must never
+  keep features locked while traffic is flowing.
+- Writes must wait for `AapSession.awaitReady()`. `events()` is a cold flow, so the
+  socket does not exist until something collects it, and a command sent before then
+  is silently dropped.
 - `PodState.usableFeatures` / `gatedFeatures` are the source of truth for what the
   UI may offer. Derive UI state from those, never from `PodModel.features` alone.
 - Gated features are *shown as locked*, not hidden. A missing button reads as a bug;
@@ -123,9 +143,11 @@ Do not merge these — they share nothing but the name:
 
 - **Powerbeats Pro 2** broadcasts the standard Bluetooth SIG Heart Rate Profile
   (`0x180D`). Plain GATT, works unrooted. Implemented in `HeartRateGattSource`.
-- **AirPods Pro 3** does not. Its HR is AAP-only. `ControlCommand.HRM_STATE` (0x30)
-  toggles the sensor, but **the measurement frame layout is not publicly decoded**.
-  There is no decoder and inventing one would be fiction.
+- **AirPods Pro 3** does not. Its HR is AAP-only, and the frame layout has never been
+  published. It does not have to be guessed at, though: the accessory sends a HID
+  report descriptor for its own heart-rate service over opcode `0x17`, naming
+  `HeartRateService` and usage `0x04B8` (Heart Rate) as an 8-bit input field. Decode
+  the descriptor rather than inventing a layout — see `docs/protocol-research.md`.
 
 ### Material 3 Expressive
 

@@ -118,6 +118,39 @@ class TransportGate(
             status
         }
 
+    /**
+     * Records that a channel is genuinely open, which outranks any probe.
+     *
+     * A probe opens a channel and closes it again; a session *is* the channel. If the two
+     * ever disagree — a probe that failed while a session is carrying traffic — the
+     * session is the one telling the truth, and a stale "unavailable" would otherwise
+     * keep every feature locked while the accessory is actively being controlled.
+     */
+    fun recordChannelOpen(address: String) {
+        _aapStatuses.update {
+            it + (address to TransportStatus(Transport.AAP_L2CAP, TransportAvailability.AVAILABLE, CHANNEL_OPEN_REASON))
+        }
+    }
+
+    /**
+     * Records that the channel dropped.
+     *
+     * Deliberately *not* an "unavailable" verdict: a channel that opened once can open
+     * again, and remembering a disconnect as a refusal would lock features that work.
+     * Clearing the entry restores "not probed", so the next attempt actually happens.
+     */
+    fun recordChannelClosed(
+        address: String,
+        reason: String,
+    ) {
+        diagnostics.record(
+            category = DiagnosticCategory.TRANSPORT,
+            message = "AAP channel closed for $address",
+            detail = reason,
+        )
+        _aapStatuses.update { it - address }
+    }
+
     /** Drops cached probe results — e.g. after Bluetooth is switched back on. */
     fun invalidate() {
         _aapStatuses.value = emptyMap()
@@ -177,14 +210,13 @@ class TransportGate(
         val (state, reason) =
             when (availability) {
                 AapAvailability.Available -> {
-                    TransportAvailability.AVAILABLE to
-                        "Channel open. Settings can be read and written."
+                    TransportAvailability.AVAILABLE to CHANNEL_OPEN_REASON
                 }
 
                 AapAvailability.PsmRejected -> {
                     TransportAvailability.UNAVAILABLE to
-                        "Android refuses PSM 0x1001, the channel AirPods use for settings. " +
-                        "Reaching it needs a patched Bluetooth stack, which means root."
+                        "This Android version refuses PSM 0x1001, the channel AirPods use for " +
+                        "settings. Battery, ear detection and auto-pause are unaffected."
                 }
 
                 AapAvailability.ApiUnavailable -> {
@@ -194,17 +226,22 @@ class TransportGate(
 
                 AapAvailability.ChannelModeRefused -> {
                     TransportAvailability.UNAVAILABLE to
-                        "The buds refused the channel mode this phone's Bluetooth stack offers. " +
-                        "This is the usual outcome on stock Android."
+                        "The buds refused the channel mode this phone's Bluetooth stack offers."
+                }
+
+                is AapAvailability.ReflectionBlocked -> {
+                    TransportAvailability.UNAVAILABLE to
+                        "This Android build will not let GreenPods build the secure channel " +
+                        "AirPods require: reflective access to android.bluetooth is refused, and " +
+                        "no public API creates that channel. Battery, ear detection and " +
+                        "auto-pause are unaffected. (${availability.detail})"
                 }
 
                 is AapAvailability.ChannelNotEstablished -> {
                     TransportAvailability.UNAVAILABLE to
                         "Your AirPods are paired and connected, and this phone accepted the " +
-                        "request — but the settings channel never came up. That is what a stock " +
-                        "Android Bluetooth stack does with PSM 0x1001; reaching it needs a " +
-                        "patched stack, which means root. Battery, ear detection and auto-pause " +
-                        "are unaffected. (${availability.route})"
+                        "request — but the settings channel never came up. Battery, ear " +
+                        "detection and auto-pause are unaffected. (${availability.route})"
                 }
 
                 AapAvailability.NotPermitted -> {
@@ -218,5 +255,9 @@ class TransportGate(
                 }
             }
         return TransportStatus(Transport.AAP_L2CAP, state, reason)
+    }
+
+    private companion object {
+        const val CHANNEL_OPEN_REASON = "Channel open. Settings can be read and written."
     }
 }

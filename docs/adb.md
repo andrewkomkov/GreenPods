@@ -59,18 +59,48 @@ simply one advertisement interval away.
 ```bash
 gp --es cmd probe                 # force a probe on the nearest accessory
 gp --es cmd probe --ez force false  # honour the probe-once cache instead
+gp --es cmd hiddenapi             # can this phone reach the Apple protocol at all?
 ```
+
+`hiddenapi` answers with no accessory present, which is the point: it separates "this
+phone will never open the channel" from "the buds are not here". The channel needs a
+hidden `BluetoothSocket` constructor that Android's non-SDK blocklist denies by
+default, so `Granted` is the precondition for everything the Apple protocol carries.
 
 Prints, for example:
 
 ```
-probe: 62:CC:F7:AC:6F:E7 -> UNAVAILABLE :: Your AirPods are paired and connected, and
-this phone accepted the request — but the settings channel never came up. …
-(public createInsecureL2capChannel)
+probe: 68:55:DE:44:54:6C -> AVAILABLE :: Channel open. Settings can be read and written.
 ```
 
-The route in brackets is which socket API got that far — the single most useful fact in
-a bug report about the Apple protocol.
+On failure the route in brackets says which socket API got that far — the single most
+useful fact in a bug report about the Apple protocol.
+
+## Writing over the Apple protocol
+
+```bash
+gp --es cmd anc --es value TRANSPARENCY   # OFF | NOISE_CANCELLATION | TRANSPARENCY | ADAPTIVE
+```
+
+```
+anc: wrote TRANSPARENCY to 68:55:DE:44:54:6C -> accepted=true, accessory reports TRANSPARENCY
+```
+
+Two separate facts, and the second is the one that matters. `accepted=true` only means
+the bytes reached the socket; `accessory reports …` is the accessory's own control
+update coming back through the decoder. A write that is accepted and never echoed is
+the characteristic failure of this transport — it is what both a raced write and a
+transport built without a `BluetoothAdapter` look like.
+
+To see the raw frames behind any of this:
+
+```bash
+adb shell setprop log.tag.AapTransport DEBUG
+adb logcat -s AapTransport          # tx/rx, hex
+```
+
+Off by default: these frames carry serial numbers and the accessory's whole
+configuration.
 
 ## Injecting an accessory
 

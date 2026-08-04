@@ -11,6 +11,7 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.hidden.api.bypass)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotest.assertions)

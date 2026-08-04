@@ -161,6 +161,20 @@ class PodRepository(
     ): TransportStatus = gate.probeAap(address, force)
 
     /**
+     * Reports that an Apple protocol channel is live for an accessory.
+     *
+     * A running session is direct evidence, where a probe is only a prediction — so this
+     * unlocks the features the channel carries even if an earlier probe had failed.
+     */
+    fun onAapChannelOpen(address: String) = gate.recordChannelOpen(address)
+
+    /** Reports that the channel dropped, so the next attempt is made afresh. */
+    fun onAapChannelClosed(
+        address: String,
+        reason: String,
+    ) = gate.recordChannelClosed(address, reason)
+
+    /**
      * Feeds a sighting into the pipeline as though the radio had heard it.
      *
      * Used by the debug build's adb surface to drive states that cannot be produced on

@@ -25,6 +25,15 @@ class AapSession(
     /** Opens the channel and emits every decoded message until collection stops. */
     fun events(device: BluetoothDevice): Flow<AapEvent> = transport.connect(device).map(AapDecoder::decode)
 
+    /**
+     * Suspends until the channel is writable.
+     *
+     * [events] is a cold flow: the channel exists only once something collects it, so a
+     * command issued immediately after subscribing would be written to a socket that
+     * does not exist yet. Callers wait on this first.
+     */
+    suspend fun awaitReady(): Boolean = transport.awaitReady()
+
     suspend fun setNoiseControlMode(mode: NoiseControlMode): Boolean = transport.send(AapCommands.listeningMode(mode))
 
     suspend fun setAdaptiveNoiseStrength(percent: Int): Boolean =

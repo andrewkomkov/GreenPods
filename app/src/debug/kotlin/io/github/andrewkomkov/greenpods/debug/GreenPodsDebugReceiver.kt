@@ -6,11 +6,14 @@ import android.content.Intent
 import android.util.Log
 import io.github.andrewkomkov.greenpods.GreenPodsApplication
 import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapEvent
+import io.github.andrewkomkov.greenpods.core.bluetooth.aap.HiddenApiAccess
 import io.github.andrewkomkov.greenpods.core.bluetooth.ble.AppleBeaconDecoder
 import io.github.andrewkomkov.greenpods.core.bluetooth.ble.PodSighting
+import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.ScanMode
 import io.github.andrewkomkov.greenpods.service.PodMonitorService
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -68,10 +71,20 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                 reply("diagnostics cleared")
             }
 
+            // Answerable with no accessory present, which is the point: it separates
+            // "this phone will never reach the Apple protocol" from "the buds are not here".
+            "hiddenapi" -> {
+                reply("hiddenapi: ${HiddenApiAccess.ensureBluetoothSocketReachable()}")
+            }
+
+            "anc" -> {
+                anc(app, intent.getStringExtra("value").orEmpty())
+            }
+
             else -> {
                 reply(
-                    "unknown command '$command'. Known: dump, probe, set, inject, monitor, clear. " +
-                        "See docs/adb.md",
+                    "unknown command '$command'. Known: dump, probe, set, inject, monitor, clear, " +
+                        "hiddenapi. See docs/adb.md",
                 )
             }
         }
@@ -114,6 +127,43 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
             }
             val status = app.podRepository.probeAap(pod.address, force = force)
             reply("probe: ${pod.address} -> ${status.availability} :: ${status.reason}")
+        }
+    }
+
+    /**
+     * Writes a listening mode over the Apple protocol and reports what came back.
+     *
+     * This is the only check that proves the channel end to end: a probe shows a socket
+     * opened, whereas a mode change that the accessory echoes back as a control update
+     * shows it is being talked to.
+     */
+    private fun anc(
+        app: GreenPodsApplication,
+        value: String,
+    ) {
+        val mode = NoiseControlMode.entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
+        if (mode == null) {
+            reply("anc: unknown mode '$value'. Known: ${NoiseControlMode.entries.joinToString { it.name }}")
+            return
+        }
+        app.applicationScope.launch {
+            val pod = app.awaitPods(DEFAULT_WAIT_MILLIS).firstOrNull()
+            if (pod == null) {
+                reply("anc: no accessory in range")
+                return@launch
+            }
+            val written = app.controlGateway.setNoiseControlMode(pod.address, mode)
+            // Give the accessory a moment to answer, then report what it actually says
+            // its mode is — not what we asked for.
+            delay(ECHO_WAIT_MILLIS)
+            val echoed =
+                app.podRepository.pods
+                    .first()
+                    .firstOrNull { it.address == pod.address }
+                    ?.noiseControlMode
+            reply(
+                "anc: wrote $mode to ${pod.address} -> accepted=$written, accessory reports ${echoed ?: "nothing yet"}",
+            )
         }
     }
 
@@ -272,6 +322,9 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
 
         /** Roughly three advertisement intervals — long enough to be fair, short enough to script. */
         const val DEFAULT_WAIT_MILLIS = 8_000L
+
+        /** How long to let the accessory answer a write before reporting what it said. */
+        const val ECHO_WAIT_MILLIS = 1_500L
 
         /** Comfortably inside logcat's per-message limit. */
         const val CHUNK_BYTES = 2_000

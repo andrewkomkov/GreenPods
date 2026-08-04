@@ -11,28 +11,52 @@ where each fact came from and what is still unknown. Treat anything marked
 |---|---|---|---|
 | BLE proximity-pairing advertisement | Every unrooted device | No | Battery, charging, in-ear/in-case, lid counter. Read-only. |
 | Standard GATT Heart Rate Profile (`0x180D`) | Every unrooted device | No | BPM — but only from Powerbeats Pro 2. |
-| AAP over L2CAP PSM `0x1001` | Permissive Bluetooth stacks only | Usually yes | Everything else: noise control, gestures, CA, head tracking, HRM toggle, rename. |
+| AAP over L2CAP PSM `0x1001` | Recent Android, unrooted | **No** | Everything else: noise control, gestures, CA, head tracking, HRM toggle, rename. |
 
-### Why AAP is gated
+### How AAP is actually reached
 
-Historically, Android's public `BluetoothDevice.createInsecureL2capChannel` validated
-that the PSM is in `0x0001..0x00FF`, so `0x1001` was rejected outright; the hidden
-`createInsecureL2capSocket` got past that check, and real AirPods then refused the
-channel with *"Peer does not support our desired channel types"*, because the stack
-negotiates a channel mode the buds do not accept.
+This section said for a long time that the channel needs a patched Bluetooth stack and
+therefore root. **That was wrong**, and it was wrong in a way worth recording, because
+every symptom pointed at the stack while the real obstacle was somewhere else entirely.
 
-On Android 17 the first half of that no longer holds — the public call accepts PSM
-`0x1001` and the connect fails afterwards instead. See the Pixel 8 field notes below.
-The outcome is unchanged; only the symptom moved.
+Three things have to be right at once:
 
-LibrePods works around this with a Magisk module (`btl2capfix.zip`) that patches
-`libbluetooth_jni.so`, or with an Xposed hook. Both require root or LSPosed.
+1. **The channel must be secure.** `createInsecureL2capChannel` builds an
+   unauthenticated, unencrypted channel. AirPods accept the connection and then never
+   bring the channel up: the first read returns -1. That is the failure this document
+   previously attributed to a stock stack refusing PSM `0x1001`. The channel the
+   accessory actually wants is `auth = true, encrypt = true`, carrying Apple's service
+   UUID `74ec2172-0bad-4d01-8f77-997b2be0722a` — the same UUID the accessory publishes
+   in its SDP record.
+2. **No public API constructs that channel.** Only a hidden `BluetoothSocket`
+   constructor does. Its signature has moved across releases, so the known forms are
+   tried in order; on Android 17 the live one is
+   `(BluetoothAdapter, BluetoothDevice, int type, boolean auth, boolean encrypt, int psm, ParcelUuid)`.
+3. **That constructor is on the non-SDK blocklist.** This is the real gate. Reflection
+   is denied outright, and the denial is silent unless you go looking for it:
 
-CAPod — the most mature unrooted app — has never shipped noise-control writing for
-exactly this reason.
+   ```
+   hiddenapi: Accessing hidden method Landroid/bluetooth/BluetoothSocket;-><init>(…)V
+   (runtime_flags=0, domain=platform, api=blocked) from …/AapTransport;
+   (domain=app, TargetSdkVersion=37) using reflection: denied
+   ```
 
-**Consequence for GreenPods:** L2CAP availability is *probed at runtime and never
-assumed*. The UI degrades per feature, not per app. See `AapTransport.probe()`.
+   `HiddenApiAccess` lifts it with `VMRuntime.setHiddenApiExemptions`, scoped to
+   `Landroid/bluetooth/BluetoothSocket;` and `Landroid/bluetooth/BluetoothDevice;`
+   rather than the blanket `""`. That is an app-local runtime flag, not a permission
+   and not a system patch — every Bluetooth permission is still enforced.
+
+LibrePods reaches the same call through a small JNI library whose strings are
+XOR-obfuscated, presumably to survive Play Store static analysis. GreenPods uses
+`org.lsposed.hiddenapibypass`, which needs no NDK and is verified working on API 37.
+
+Their `RootlessSupport.isSupported` gates the rootless path to SDK ≥ 37, plus Android 16
+on Pixel builds starting `CP1A` and on the Oppo/OnePlus/Realme family — a useful hint at
+where the blocklist entry differs, and **unverified** by us on anything but a Pixel 8.
+
+**Consequence for GreenPods:** availability is still *probed at runtime and never
+assumed*. Working on one Android build says nothing about the next one moving the
+constructor, and the UI still degrades per feature rather than per app.
 
 ## Heart rate
 
@@ -45,16 +69,66 @@ Two completely separate paths, and the difference is a firmware decision by Appl
   data is only available inside Apple's ecosystem, which means over AAP.
 
 For the AAP path, `ControlCommand.HRM_STATE` (`0x30`) is known to enable and disable
-the sensor. **The measurement frame layout is not publicly documented.** LibrePods
-declares an `HRM` capability and the toggle, but ships no BPM decoder.
+the sensor. LibrePods declares an `HRM` capability and the toggle, but ships no BPM
+decoder, and no public source documents the measurement frame.
 
-### The sensor is gated on a workout, not just on the toggle
+### The accessory describes its own heart-rate format
+
+It does not have to be guessed at. On connecting to AirPods Pro 3 (firmware `81.2675…`,
+captured 2026-08-04), the buds send several large frames under opcode `0x17` that are
+HID service descriptors in plain text, and one of them is the heart-rate service:
+
+```
+HeartRateService   HeartRate   com.apple.hid.heartrate-access
+HIDServiceAccessEntitlement / HIDDeviceAccessEntitlement
+```
+
+followed by a real HID report descriptor. Decoded:
+
+| Bytes | Meaning |
+|---|---|
+| `05 20` | Usage Page — Sensors |
+| `09 16` | Usage — biometric sensor collection |
+| `85 01` | Report ID 1 |
+| `0A 0E 03` … `75 20 95 01 B1 02` | Feature report: report interval, 32-bit |
+| `0A B8 04` `26 FF 00` `75 08 95 01 81 02` | **Input: usage `0x04B8` (Heart Rate), 8 bits, max 255** |
+| `26 FF 7F` `0A 21 01` `95 01 75 10 81 02` | Input: 16-bit vendor field |
+| `1A 04 01 2A 05 01 81 00` | Input: measurement-confidence style enum |
+
+So BPM is a single byte in a HID input report, and the accessory publishes the layout
+itself. This is **unverified against live readings** — the descriptor says how a report
+is shaped, not that a report has been seen. Two things still have to be established:
+
+1. Which AAP frame carries the HID *reports* (as opposed to these descriptors).
+2. Whether `HRM_STATE` alone starts the stream, or whether the report-interval feature
+   report has to be written first. The descriptor exposing report interval as a
+   *feature* report is a strong hint that setting it is how a host asks for data — which
+   is the ordinary HID sensor contract, not an Apple invention.
+
+The observed value on a connected, idle device is `09 00 30 01 00 00 00` — `HRM_STATE`
+already `1` — while no measurements arrive, which is consistent with the sensor being
+enabled but not reporting until asked at an interval.
+
+### The workout gate is host policy, not accessory firmware
 
 Apple only collects heart rate on AirPods Pro 3 **while a workout is running, or while
 the Health app is open**. There is no setting for continuous monitoring; owners report
-that the sensor is simply idle the rest of the time, and Apple's own material describes
-it as a workout feature. That is a product decision, not a protocol limitation — the
-battery cost of running an optical sensor continuously is the stated reason.
+that the sensor is idle the rest of the time, and Apple's own material describes it as a
+workout feature. That is a product decision, not a protocol limitation — the battery
+cost of running an optical sensor continuously is the stated reason.
+
+An iOS app called **AirPulse** (App Store id 6760625679, shipped 2026) reads AirPods Pro
+3 heart rate continuously in the background, outside any workout. That matters here for
+one reason: it demonstrates the buds will stream heart rate whenever a host asks
+properly. The restriction lives in whatever iOS requires an app to hold open, not in a
+mode the accessory refuses to enter. There is no evidence of a "start workout" command
+on the wire, and looking for one is probably the wrong search — the HID contract in the
+descriptor above (write the report interval, receive input reports) is the mechanism
+that a host-side subscription would ultimately drive.
+
+**Unverified.** AirPulse is closed-source and iOS-only; nothing above has been confirmed
+against its traffic. What can be tested from Android is direct: write the report-interval
+feature report, and see whether input reports follow.
 
 Two consequences, and they change what "implement heart rate" even means:
 
@@ -166,14 +240,12 @@ The first run against real hardware, and it moved three things from theory to fa
   `createInsecureL2capChannel` validates the PSM into `0x0001..0x00FF`. On Android 17
   that call *succeeded* — the reflective fallback was never reached, and the failure
   came later, from the connect: `read failed, socket might closed or timeout, read
-  ret: -1`. So on current Android the blocker has moved: the socket is created and the
-  channel simply never comes up. Whether the range check was relaxed or moved is
-  **unverified**; what is certain is that a PSM rejection is no longer the symptom to
-  look for. The route actually taken is now reported in the failure text.
-- **The accessory being paired, connected and playing audio changes nothing.** All of
-  that was true during this test. The Apple protocol channel still did not establish,
-  which is consistent with everything above: without a patched stack it does not matter
-  how healthy the ordinary Bluetooth connection is.
+  ret: -1`.
+- **The conclusion drawn from that was wrong.** It was read as "the stack will not carry
+  this channel without root". The actual cause was that an *insecure* channel is the
+  wrong request; see the next entry. Recorded here because the reasoning is the trap:
+  every observable fact was consistent with a refusing stack, and none of them
+  distinguished it from asking incorrectly.
 
 Also confirmed on this device:
 
@@ -195,11 +267,48 @@ Also confirmed on this device:
   a pause it no longer owns, and silently never fires. A short settle window after our
   own pause is what makes the two rules coexist.
 
+### Pixel 8 (shiba), Android 17 / API 37, unrooted — AAP channel open — 2026-08-04
+
+The same phone, later the same day, with the secure-channel and non-SDK fixes in place.
+The channel opened and stayed open.
+
+- **Reads work.** On connecting, the accessory volunteers its whole state without being
+  asked: device information (`0x1D`) with model `A3063`, separate left and right serial
+  numbers and firmware `81.2675000075000000.6877`; a capability list (`0x02`); around
+  twenty control commands (`0x09`) carrying current values — listening mode, click
+  intervals, volume-swipe settings, call management, sleep detection, `0x2E = 0x64`
+  (adaptive strength 100); a headphone-accommodation block (`0x53`); and the HID service
+  descriptors under `0x17` described above.
+- **Writes work.** `09 00 0D 03` set Transparency and `09 00 0D 02` set Noise
+  Cancellation; both came back as control updates from the accessory, and
+  `PodState.noiseControlMode` followed. Adaptive strength and Conversational Awareness
+  read back as `100` and `false` from the device rather than from our own assumptions.
+- **A probe is not a session.** Opening a socket succeeded well before any traffic
+  flowed. Two separate defects hid behind that: writes raced the cold flow that creates
+  the socket (fixed with `AapSession.awaitReady`), and the control gateway built a
+  transport with no `BluetoothAdapter`, which on this Android skips the only constructor
+  that exists. Both produced "accepted, nothing happened", which is the failure mode to
+  expect from this transport and the reason the adb surface reports what the *accessory*
+  says rather than what was sent.
+- **The name over AAP differs from the advertisement.** The accessory calls itself
+  "AirPods Pro"; the proximity payload identifies the model as AirPods Pro 3 (`0x2720`).
+  Neither is wrong — one is the user-set name, the other is the model.
+
 ## Sources
 
 - LibrePods protocol notes — `docs/AAP Definitions.md`, `opcodes.md`,
   `control_commands.md`. Captured against AirPods Pro 2 firmware 7A305 and the
   iOS 19.1 beta Bluetooth stack. <https://github.com/librepods-org/librepods>
+- LibrePods Android sources for the rootless L2CAP route: `BluetoothConnectionManager.kt`
+  (the constructor signature list) and `cpp/bluetooth_socket.cpp` (the non-SDK
+  exemption). The README's feature table is about the app; these two files are about
+  what is actually possible.
+- tyalie's AAP protocol definition — the earliest public write-up, a Kaitai grammar and
+  raw captures, and the source of the fact that proximity/encryption keys can be
+  requested straight after the connect handshake.
+  <https://github.com/tyalie/AAP-Protocol-Defintion>
+- rithvikvibhu's hearing-aid notes — audiogram and transparency packet layouts, IEEE-754
+  float fields. <https://gist.github.com/rithvikvibhu/45e24bbe5ade30125f152383daf07016>
 - CAPod device registry, used to cross-check every model id in `PodModel`.
   <https://github.com/d4rken-org/capod>
 - DC Rainmaker's teardown of heart-rate behaviour on AirPods Pro 3 vs Powerbeats

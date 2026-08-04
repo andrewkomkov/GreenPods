@@ -1,19 +1,24 @@
 package io.github.andrewkomkov.greenpods.core.bluetooth.aap
 
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.os.Build
+import android.os.ParcelUuid
 import android.util.Log
 import androidx.annotation.RequiresApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.lang.reflect.InvocationTargetException
 
@@ -34,6 +39,15 @@ sealed interface AapAvailability {
 
     /** The socket opened but the buds refused the negotiated channel mode. */
     data object ChannelModeRefused : AapAvailability
+
+    /**
+     * The channel could not even be constructed, because this Android build refuses
+     * reflective access to `android.bluetooth` and no public API builds the secure
+     * channel AirPods require. See [HiddenApiAccess].
+     */
+    data class ReflectionBlocked(
+        val detail: String,
+    ) : AapAvailability
 
     /**
      * The socket was created and the connect call was accepted, but no channel ever
@@ -69,8 +83,31 @@ sealed interface AapAvailability {
  */
 class AapTransport(
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+    /**
+     * Needed only by the newest hidden-constructor signature, which takes the adapter as
+     * its first argument. Null simply skips that signature.
+     */
+    private val adapter: BluetoothAdapter? = null,
 ) {
     private var socket: BluetoothSocket? = null
+
+    /**
+     * Whether the channel is up and writable.
+     *
+     * [connect] returns a cold flow, so the socket does not exist until something starts
+     * collecting it — a write issued straight after subscribing would otherwise find no
+     * socket and be dropped. Callers wait on this instead of guessing at a delay.
+     */
+    private val ready = MutableStateFlow(false)
+
+    /**
+     * Suspends until the channel is writable, or until [timeoutMillis] passes.
+     *
+     * Returns false on timeout rather than throwing: a channel that never comes up is an
+     * ordinary outcome on hardware that refuses it.
+     */
+    suspend fun awaitReady(timeoutMillis: Long = READY_TIMEOUT_MILLIS): Boolean =
+        withTimeoutOrNull(timeoutMillis) { ready.first { it } } ?: false
 
     /**
      * Which socket API actually produced the channel on the last attempt.
@@ -121,7 +158,7 @@ class AapTransport(
                     }
                 }
             } catch (e: ReflectiveOperationException) {
-                AapAvailability.Failed("Hidden L2CAP API unavailable: ${e.message}")
+                AapAvailability.ReflectionBlocked(e.message.orEmpty())
             }
         }
 
@@ -145,6 +182,7 @@ class AapTransport(
             output.write(AapProtocol.SET_HOST_CAPABILITIES)
             output.write(AapProtocol.REQUEST_NOTIFICATIONS)
             output.flush()
+            ready.value = true
 
             val reader =
                 CoroutineScope(ioDispatcher).launch {
@@ -153,7 +191,9 @@ class AapTransport(
                         while (true) {
                             val read = bluetoothSocket.inputStream.read(buffer)
                             if (read <= 0) break
-                            trySend(buffer.copyOf(read))
+                            val packet = buffer.copyOf(read)
+                            logFrame("rx", packet)
+                            trySend(packet)
                         }
                     } catch (e: IOException) {
                         Log.d(TAG, "AAP channel closed: ${e.message}")
@@ -162,6 +202,7 @@ class AapTransport(
                 }
 
             awaitClose {
+                ready.value = false
                 reader.cancel()
                 runCatching { bluetoothSocket.close() }
                 socket = null
@@ -173,6 +214,7 @@ class AapTransport(
         withContext(ioDispatcher) {
             val stream = socket?.outputStream ?: return@withContext false
             try {
+                logFrame("tx", packet)
                 stream.write(packet)
                 stream.flush()
                 true
@@ -185,35 +227,127 @@ class AapTransport(
     /**
      * Opens the L2CAP socket.
      *
-     * The public API is tried first. It rejects PSM 0x1001 outright, so the hidden
-     * `createInsecureL2capSocket` is used as a fallback — that is the same route
-     * LibrePods takes, and it is what the Magisk stack patch makes actually work.
+     * The channel that works is **secure** — authenticated and encrypted — and carries
+     * Apple's AAP service UUID. `createInsecureL2capChannel` builds neither of those, and
+     * an insecure channel is exactly what the accessory drops on the floor: the connect
+     * is accepted and the first read returns -1. That symptom was read as "the stack
+     * refuses PSM 0x1001 without a Magisk patch" for the whole life of this project, and
+     * it was the wrong conclusion — the request was simply the wrong shape.
+     *
+     * No public API constructs that channel, so the hidden [BluetoothSocket] constructor
+     * is used, trying the signatures across Android versions in turn. This is the same
+     * route LibrePods takes, and it needs no root.
      */
     @SuppressLint("MissingPermission")
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun openSocket(device: BluetoothDevice): BluetoothSocket =
         try {
+            secureL2capSocket(device)
+        } catch (e: ReflectiveOperationException) {
+            // Nothing matched — fall back to the public API so the failure is still
+            // reported against a real attempt rather than a missing constructor.
             device.createInsecureL2capChannel(AapProtocol.PSM).also {
-                lastSocketRoute = "public createInsecureL2capChannel"
+                lastSocketRoute = "public createInsecureL2capChannel (reflection unavailable)"
             }
-        } catch (e: IllegalArgumentException) {
-            hiddenL2capSocket(device).also { lastSocketRoute = "hidden createInsecureL2capSocket" }
         }
 
-    private fun hiddenL2capSocket(device: BluetoothDevice): BluetoothSocket =
-        try {
-            val method =
-                BluetoothDevice::class.java.getMethod(
-                    "createInsecureL2capSocket",
-                    Int::class.javaPrimitiveType,
-                )
-            method.invoke(device, AapProtocol.PSM) as BluetoothSocket
-        } catch (e: InvocationTargetException) {
-            throw (e.cause as? IOException ?: IOException("createInsecureL2capSocket failed", e))
+    /**
+     * Builds a secure L2CAP socket on [AapProtocol.PSM] through whichever hidden
+     * constructor this Android version exposes.
+     *
+     * The signature has been reshuffled repeatedly across releases, so all known forms
+     * are tried in order of how recent they are. The constant part is the arguments:
+     * type 3 (L2CAP), auth `true`, encrypt `true`, PSM `0x1001`, and [APPLE_AAP_UUID].
+     */
+    private fun secureL2capSocket(device: BluetoothDevice): BluetoothSocket {
+        // Without this the constructor lookup below fails with NoSuchMethodException even
+        // though the constructor exists — see HiddenApiAccess.
+        val access = HiddenApiAccess.ensureBluetoothSocketReachable()
+        if (!access.isUsable) {
+            lastSocketRoute = "blocked by non-SDK restriction"
+            throw NoSuchMethodException("android.bluetooth is not reflectable: $access")
         }
+
+        val uuid = ParcelUuid.fromString(APPLE_AAP_UUID)
+        val psm = AapProtocol.PSM
+        val candidates: List<Pair<String, Array<Any>>> =
+            buildList {
+                adapter?.let {
+                    add("adapter+device (Android 16 QPR3+)" to arrayOf(it, device, L2CAP_TYPE, true, true, psm, uuid))
+                }
+                add("device,type,auth,encrypt,psm,uuid" to arrayOf(device, L2CAP_TYPE, true, true, psm, uuid))
+                add("device,type,fd,auth,encrypt,psm,uuid" to arrayOf(device, L2CAP_TYPE, 1, true, true, psm, uuid))
+                add("type,fd,auth,encrypt,device,psm,uuid" to arrayOf(L2CAP_TYPE, 1, true, true, device, psm, uuid))
+                add("type,auth,encrypt,device,psm,uuid" to arrayOf(L2CAP_TYPE, true, true, device, psm, uuid))
+            }
+
+        var lastFailure: Exception? = null
+        for ((name, args) in candidates) {
+            try {
+                val parameterTypes = args.map { it::class.javaPrimitiveType ?: it::class.java }.toTypedArray()
+                val constructor = BluetoothSocket::class.java.getDeclaredConstructor(*parameterTypes)
+                constructor.isAccessible = true
+                return (constructor.newInstance(*args) as BluetoothSocket).also {
+                    lastSocketRoute = "secure L2CAP via hidden constructor [$name]"
+                }
+            } catch (e: NoSuchMethodException) {
+                lastFailure = e
+            } catch (e: InvocationTargetException) {
+                throw (e.cause as? IOException ?: IOException("L2CAP socket construction failed", e))
+            } catch (e: ReflectiveOperationException) {
+                lastFailure = e
+            }
+        }
+        // Printed only when every signature missed, because it is then the one fact that
+        // says how a new Android release reshuffled the constructor.
+        val available =
+            BluetoothSocket::class.java.declaredConstructors.joinToString("; ") { constructor ->
+                constructor.parameterTypes.joinToString(", ") { it.simpleName }
+            }
+        Log.w(TAG, "No BluetoothSocket constructor matched. Available: $available")
+        throw NoSuchMethodException(
+            "No known BluetoothSocket constructor matched (tried ${candidates.size}): ${lastFailure?.message}",
+        )
+    }
+
+    /**
+     * Logs one frame in hex, when frame logging has been turned on for this tag:
+     *
+     * ```
+     * adb shell setprop log.tag.AapTransport DEBUG
+     * ```
+     *
+     * The wire format is reverse-engineered, so the raw bytes are the only ground truth
+     * when a command is accepted and nothing observable happens. It is off by default
+     * because these frames carry serial numbers and the accessory's whole configuration.
+     */
+    private fun logFrame(
+        direction: String,
+        packet: ByteArray,
+    ) {
+        if (!Log.isLoggable(TAG, Log.DEBUG)) return
+        Log.d(TAG, "$direction ${packet.joinToString(" ") { "%02X".format(it) }}")
+    }
 
     private companion object {
         const val TAG = "AapTransport"
         const val READ_BUFFER_BYTES = 1024
+
+        /**
+         * How long a write waits for the channel. Generous, because opening it involves a
+         * full authenticated L2CAP setup with the accessory, not just a local call.
+         */
+        const val READY_TIMEOUT_MILLIS = 5_000L
+
+        /** `BluetoothSocket.TYPE_L2CAP`, which is not public API. */
+        const val L2CAP_TYPE = 3
+
+        /**
+         * Apple's AAP service UUID, as advertised in the accessory's SDP record.
+         *
+         * The socket carries it so the stack requests the right service rather than a
+         * bare PSM.
+         */
+        const val APPLE_AAP_UUID = "74ec2172-0bad-4d01-8f77-997b2be0722a"
     }
 }

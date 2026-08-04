@@ -27,17 +27,21 @@ all of them. GreenPods is built around that reality rather than pretending other
 | Case lid-open events | BLE advertisement | ✅ Always |
 | Low-battery warnings, background monitoring | BLE advertisement | ✅ Always |
 | Heart rate — **Powerbeats Pro 2** | Standard BLE Heart Rate Profile | ✅ Always |
-| Noise control (ANC / Transparency / Adaptive) | AAP over L2CAP | ⚠️ Stack-dependent |
-| Conversational Awareness, adaptive audio | AAP over L2CAP | ⚠️ Stack-dependent |
-| Stem gestures, rename, ear-detection toggle | AAP over L2CAP | ⚠️ Stack-dependent |
-| Head tracking + head gestures | AAP over L2CAP | ⚠️ Stack-dependent |
+| Noise control (ANC / Transparency / Adaptive) | AAP over L2CAP | ✅ Recent Android |
+| Conversational Awareness, adaptive audio | AAP over L2CAP | ✅ Recent Android |
+| Stem gestures, rename, ear-detection toggle | AAP over L2CAP | ✅ Recent Android |
+| Head tracking + head gestures | AAP over L2CAP | ✅ Recent Android |
 | Heart rate — **AirPods Pro 3** | AAP, frame format not yet decoded | ❌ Not yet |
 | Find My, device switching, Siri, audio sharing | Apple account services | ❌ Never |
 
-**Why "stack-dependent":** the Apple Accessory Protocol runs over an L2CAP channel
-on PSM `0x1001`. Android's public API rejects any PSM ≥ `0x0100`, and the hidden one
-is refused by real AirPods on most devices. GreenPods probes for it at runtime and
-unlocks those features where it works. Everything in the "always" rows is unaffected.
+**Why "recent Android":** the Apple Accessory Protocol runs over an L2CAP channel on
+PSM `0x1001`, and the accessory only accepts an authenticated, encrypted channel
+carrying Apple's service UUID. No public Android API builds one, and the hidden
+constructor that does is on the non-SDK blocklist — so reaching it takes a scoped
+runtime exemption for `android.bluetooth`, not root. Verified on a stock, unrooted
+Pixel 8 running Android 17. GreenPods still probes at runtime rather than assuming,
+because an Android release can move that constructor again. Everything in the
+"always" rows is unaffected either way.
 
 The app shows locked features rather than hiding them, so you can tell the
 difference between "your phone won't allow this" and "the app doesn't do it". Tap a

@@ -1,8 +1,10 @@
 package io.github.andrewkomkov.greenpods.core.data.control
 
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapSession
+import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapTransport
 import io.github.andrewkomkov.greenpods.core.data.PodRepository
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
@@ -27,7 +29,13 @@ class AapControlGateway(
     private val repository: PodRepository,
     private val diagnostics: DiagnosticsLog,
     private val scope: CoroutineScope,
-    private val session: AapSession = AapSession(),
+    // The adapter is not optional in practice: the only BluetoothSocket constructor that
+    // exists on current Android takes it as its first argument, so a transport built
+    // without one can open no channel at all.
+    private val session: AapSession =
+        AapSession(
+            AapTransport(adapter = context.getSystemService(BluetoothManager::class.java)?.adapter),
+        ),
     private val resolver: BondedPodResolver = BondedPodResolver(context),
 ) : PodControlGateway {
     private var connectedAddress: String? = null
@@ -55,9 +63,18 @@ class AapControlGateway(
                             "Apple protocol channel closed",
                             error.message.orEmpty(),
                         )
-                    }.onCompletion { repository.clearOverlay(address) }
-                    .collect { event -> repository.onAapEvent(address, event) }
+                    }.onCompletion { cause ->
+                        repository.clearOverlay(address)
+                        repository.onAapChannelClosed(address, cause?.message ?: "channel ended")
+                    }.collect { event -> repository.onAapEvent(address, event) }
             }
+
+        // Announce the channel only once it is actually carrying traffic. Announcing on
+        // subscription would unlock every gated feature a moment before the accessory
+        // could answer, which reads as a feature that does nothing.
+        scope.launch {
+            if (session.awaitReady()) repository.onAapChannelOpen(address)
+        }
         return true
     }
 
@@ -93,6 +110,16 @@ class AapControlGateway(
         write: suspend () -> Boolean,
     ): Boolean {
         if (!connect(address)) return false
+        // connect() only starts the collection; the channel comes up a moment later.
+        // Writing before then silently drops the command.
+        if (!session.awaitReady()) {
+            diagnostics.record(
+                DiagnosticCategory.TRANSPORT,
+                "Apple protocol write skipped",
+                "The channel did not become writable in time.",
+            )
+            return false
+        }
         return write()
     }
 }
