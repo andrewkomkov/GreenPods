@@ -185,6 +185,72 @@ constant trailing 4 bytes are unexplained.
 `HRM_STATE` (`0x30`) was already `1` on this device throughout, and was never written.
 Whether it must be `1` for this to work is **untested**.
 
+### The accessory announces its services, and the id is in the announcement — 2026-08-04
+
+Captured on the Pixel 8 from AirPods Pro 3 (firmware `81.2675…`) by opening the channel
+with `gp --es cmd raw` and reading `log.tag.AapTransport DEBUG`. This is the piece that
+makes "read the service ids from the descriptors" implementable rather than aspirational.
+
+The `0x17` protobuf body carries, at the top level:
+
+| Field | Wire type | Meaning |
+|---|---|---|
+| 1 | varint | Sequence, increments per frame |
+| 2 | varint | Constant `1` on descriptor frames |
+| 5 | bytes, repeated | One **service descriptor** |
+| 7 | bytes | Input report — `08 <service id> 1A <len> <report>` |
+| 8 | bytes | Start/stop request, host → accessory |
+| 12 | bytes, repeated | **Service ready** — `08 <service id>` |
+
+A field-5 descriptor is `08 <service id>` then `12 <len> <blob>`, where the blob is a
+serialised Apple property dictionary: `D3 <count>`, then entries of
+`<u16 keylen> 00 00 09 <ASCII key> <typed value>`. The four services announced:
+
+| Id | `AccessoryService` | Notable keys |
+|---|---|---|
+| `0x10` | `devmotion` | SerialNumber, CFG#, PrimaryVendorUsages, ReportDescriptor |
+| `0x11` | `SPL0` | MaxReportSize, MaxFIFOSize, ReportDescriptor |
+| `0x12` | `HostLibHID` | MultipleInterfaceEnabled, ReportDescriptor |
+| `0x13` | `HeartRateService` → `HeartRate` | MaxReportSize 601, HIDServiceAccessEntitlement and HIDDeviceAccessEntitlement both `com.apple.hid.heartrate-access`, ReportDescriptor |
+
+Two frames later the accessory sent the readiness list — field 12 carrying `0x10`, `0x11`,
+`0x12`, `0x13`. **The id is data in every one of these places, and a name sits beside it.**
+Find the service by `HeartRateService` (or the entitlement string) and read the id from the
+protobuf; a model that numbers its services differently then needs no code change.
+
+The heart-rate service's own `ReportDescriptor`, 126 bytes verbatim:
+
+```
+05 20 09 16 A1 01 85 01 0A 0E 03 14 27 FF FF FF 7F 75 20 95 01 B1 02
+0A B8 04 26 FF 00 75 08 95 01 81 02
+06 15 FF 0A 20 01 95 01 75 08 81 02
+26 FF 7F 06 15 FF 0A 21 01 95 01 75 10 81 02
+75 08 95 01 15 01 25 02 1A 04 01 2A 05 01 81 00
+06 00 FF 09 23 A1 00 15 00 24
+06 15 FF 09 04 95 08 75 08 81 02
+06 0A FF 09 12 95 04 75 08 81 02
+85 02 06 0A FF 09 13 96 58 02 75 08 81 02 C0 C0
+```
+
+It reproduces the 18-byte report layout above field for field, from the accessory rather
+than from a diff — which is the confirmation that was missing. It also **corrects two
+things written earlier on this page**:
+
+- The item group `1A 04 01 2A 05 01 81 00`, described above as a "measurement-confidence
+  style enum", is the **status** field (logical 1..2, usages `0x0104..0x0105`). The
+  confidence byte is the *preceding* vendor usage **`0xFF15:0x0120`**, 8 bits. Confidence
+  is still a name given from behaviour, but it is now a name given to a specific usage.
+- `MaxReportSize` is 601 because the same service declares a **second report, id 2**, of
+  600 bytes under vendor usage `0xFF0A:0x13`. Its purpose is unknown and it is not
+  decoded. It is real traffic that a heart-rate implementation will meet.
+
+Also learned from the same capture, and it is a framing fact rather than a protocol one:
+the descriptor frames were 488, 996, 20 and 28 bytes, and the declared 16-bit length at
+offset 10 matched the delivered bytes in all four. The 996-byte frame carried three service
+descriptors and sat 28 bytes under `AapTransport`'s 1024-byte read buffer. One more service
+crosses it, so frames must be reassembled against the declared length rather than trusted
+to arrive whole in a single read.
+
 ### The workout gate is host policy, not accessory firmware — confirmed
 
 Apple only collects heart rate on AirPods Pro 3 **while a workout is running, or while
