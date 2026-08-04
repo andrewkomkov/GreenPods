@@ -35,6 +35,31 @@ data class HeartRateUi(
 
         /** Settling and starting are waits with a reason, and read as progress. */
         val showsProgress: Boolean get() = this == SETTLING || this == STARTING
+
+        /**
+         * How much the card should stand out from the rest of the pod card.
+         *
+         * Three levels, and the ordering is the requirement rather than the styling: a
+         * trusted reading is the most prominent thing on the card, a wait is present but
+         * quiet, and a state that is merely explaining itself recedes. Colour is never the
+         * *only* difference — the icon, the copy and the presence of a number all change
+         * too — because a user who cannot distinguish the containers must still be able to
+         * tell a measurement from a wait (T080).
+         */
+        val emphasis: Emphasis
+            get() =
+                when (this) {
+                    MEASURING -> Emphasis.PROMINENT
+                    SETTLING, STARTING, UNCERTAIN -> Emphasis.ACTIVE
+                    OFF, UNAVAILABLE, LOCKED, UNSUPPORTED -> Emphasis.QUIET
+                }
+    }
+
+    /** The container weight a state is drawn with. */
+    enum class Emphasis {
+        PROMINENT,
+        ACTIVE,
+        QUIET,
     }
 
     companion object {

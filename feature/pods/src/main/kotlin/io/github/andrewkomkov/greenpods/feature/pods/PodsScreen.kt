@@ -1,5 +1,14 @@
 package io.github.andrewkomkov.greenpods.feature.pods
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,19 +28,27 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.andrewkomkov.greenpods.core.designsystem.component.BatteryRing
 import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilityRow
 import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilityUi
+import io.github.andrewkomkov.greenpods.core.designsystem.component.HeartBeatIcon
+import io.github.andrewkomkov.greenpods.core.designsystem.theme.GreenPodsMotion
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.WearState
 
@@ -159,6 +176,47 @@ private fun HeartRateCard(
     ui: HeartRateUi,
     modifier: Modifier = Modifier,
 ) {
+    // The container weight follows the state, animated so a change of emphasis is a
+    // transition rather than a repaint. Colour is additive here: every state also differs
+    // in icon, copy and whether a number is present, so nothing is carried by hue alone.
+    val container by animateColorAsState(
+        targetValue =
+            when (ui.kind.emphasis) {
+                HeartRateUi.Emphasis.PROMINENT -> MaterialTheme.colorScheme.primaryContainer
+                HeartRateUi.Emphasis.ACTIVE -> MaterialTheme.colorScheme.secondaryContainer
+                HeartRateUi.Emphasis.QUIET -> MaterialTheme.colorScheme.surfaceVariant
+            },
+        animationSpec = GreenPodsMotion.effects(),
+        label = "heart-rate-container",
+    )
+    val onContainer by animateColorAsState(
+        targetValue =
+            when (ui.kind.emphasis) {
+                HeartRateUi.Emphasis.PROMINENT -> MaterialTheme.colorScheme.onPrimaryContainer
+                HeartRateUi.Emphasis.ACTIVE -> MaterialTheme.colorScheme.onSecondaryContainer
+                HeartRateUi.Emphasis.QUIET -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        animationSpec = GreenPodsMotion.effects(),
+        label = "heart-rate-on-container",
+    )
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = container,
+        contentColor = onContainer,
+        // Expressive corner language: generous and consistent with the pod card that
+        // contains it, rather than the tighter baseline default.
+        shape = MaterialTheme.shapes.large,
+    ) {
+        HeartRateCardContent(ui = ui, modifier = Modifier.padding(12.dp))
+    }
+}
+
+@Composable
+private fun HeartRateCardContent(
+    ui: HeartRateUi,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier =
             modifier
@@ -168,25 +226,61 @@ private fun HeartRateCard(
                     // minute" read out of context is exactly the reading-as-fact this
                     // feature spends its whole design avoiding.
                     contentDescription = ui.spoken
+                    // Announced as it changes, so a blind user learns that settling
+                    // finished without having to go looking. Polite, not assertive: this
+                    // is never urgent, and it must not interrupt what is being read.
+                    liveRegion = LiveRegionMode.Polite
                 },
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (ui.kind.showsProgress) {
-            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-        } else {
-            Icon(Icons.Filled.MonitorHeart, contentDescription = null)
+        // The leading mark is three different things, and the transition between them is
+        // where "the sensor found its footing" is expressed. A spinner that vanishes and
+        // a number that appears in its place is the same information delivered as a jump.
+        AnimatedContent(
+            targetState = ui.kind,
+            transitionSpec = {
+                (fadeIn(GreenPodsMotion.effects()) + scaleIn(GreenPodsMotion.defaultSpatial(), initialScale = 0.7f))
+                    .togetherWith(fadeOut(GreenPodsMotion.effects()))
+            },
+            label = "heart-rate-mark",
+        ) { kind ->
+            when {
+                kind.showsProgress -> {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                }
+
+                // Beating at the rate it is showing — see HeartBeatIcon. This is the one
+                // animation here whose timing is data.
+                kind == HeartRateUi.Kind.MEASURING && ui.beatsPerMinute != null -> {
+                    HeartBeatIcon(beatsPerMinute = ui.beatsPerMinute, tint = LocalContentColor.current)
+                }
+
+                else -> {
+                    Icon(Icons.Filled.MonitorHeart, contentDescription = null)
+                }
+            }
         }
 
         Column(Modifier.weight(1f)) {
-            val beatsPerMinute = ui.beatsPerMinute
-            if (beatsPerMinute != null) {
+            // Withdrawn, not blanked. `AnimatedVisibility` shrinking the number away is
+            // the difference between "the reading is no longer trustworthy" and "the app
+            // lost your reading" — FR-006 asks for the first, and a value that simply
+            // disappears communicates the second.
+            AnimatedVisibility(
+                visible = ui.beatsPerMinute != null,
+                enter = fadeIn(GreenPodsMotion.effects()) + expandVertically(GreenPodsMotion.defaultSpatial()),
+                exit = fadeOut(GreenPodsMotion.effects()) + shrinkVertically(GreenPodsMotion.defaultSpatial()),
+            ) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.Bottom,
                 ) {
+                    // Kept across recompositions so the number does not blink out during
+                    // the exit animation it is the subject of.
+                    val shown = remember(ui.beatsPerMinute) { ui.beatsPerMinute }
                     Text(
-                        beatsPerMinute.toString(),
+                        shown?.toString().orEmpty(),
                         style = MaterialTheme.typography.headlineMedium,
                     )
                     Text(
@@ -195,7 +289,9 @@ private fun HeartRateCard(
                         modifier = Modifier.padding(bottom = 4.dp),
                     )
                 }
-            } else {
+            }
+
+            if (ui.beatsPerMinute == null) {
                 Text(ui.title, style = MaterialTheme.typography.titleMedium)
             }
 

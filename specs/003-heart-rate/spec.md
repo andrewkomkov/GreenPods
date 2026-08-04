@@ -1,10 +1,22 @@
 # Feature Specification: Heart rate
 
-**Feature Branch**: `feat/heart-rate` *(not yet created)*
+**Feature Branch**: `feat/heart-rate`
 
 **Created**: 2026-08-04
 
-**Status**: Draft
+**Status**: Implemented; working on hardware. Accuracy and battery cost unclaimed.
+
+**Verified 2026-08-04** on a Pixel 8 (Android 17, unrooted) with AirPods Pro 3: the
+accessory's heart-rate service is discovered from its own announcement rather than
+assumed, reports arrive at the requested cadence, the confidence gate holds, the stop
+frame reaches the earbuds, report bodies never enter any log, and a heart rate reaches
+the screen.
+
+**Not claimed**: SC-002 (accuracy against a reference monitor) and SC-006 (battery cost)
+were never measured — the hardware became unavailable before those sessions. The
+confidence threshold therefore still ships as the provisional 128 it started as. The
+Powerbeats Pro 2 route remains implemented and unverified on hardware, as the Assumptions
+below record.
 
 **Input**: Ship heart rate from AirPods Pro 3, and write it into Google's health store on
 Android so other apps can use it.

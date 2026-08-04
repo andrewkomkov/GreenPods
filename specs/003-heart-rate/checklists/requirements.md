@@ -29,6 +29,27 @@
 - [x] Feature meets measurable outcomes defined in Success Criteria
 - [x] No implementation details leak into specification
 
+## Outcome — 2026-08-04
+
+Every item above was already ticked before implementation; what follows is what the
+implementation did to them, recorded because a checklist that is never revisited is a
+formality.
+
+- **"Success criteria are measurable" held, and two of them stayed unmet.** SC-002
+  (accuracy against a reference monitor) and SC-006 (battery cost) were measurable exactly
+  as written, and were not measured — the hardware became unavailable. They are recorded
+  as unclaimed rather than quietly dropped, which is the behaviour the criterion was
+  written to make possible.
+- **"Requirements are testable and unambiguous" was the item that paid for itself.** FR-002
+  ("the service id is discovered, not assumed") is why this feature works at all: the
+  reference implementation everyone else follows hard-codes two candidate ids and ships a
+  settings toggle to guess between them. Discovery survived a firmware whose heart-rate
+  service names itself with a different key from its siblings.
+- **"Edge cases are identified" was incomplete in a way no review would have caught.** The
+  spec anticipated a sensor that never converges; it did not anticipate an accessory that
+  never *announces* its sensor, which turned out to be the normal case for a channel opened
+  at the wrong moment. That gap became FR-002's hardest constraint and three new tasks.
+
 ## Notes
 
 **The confidence gate is the spine of this specification, not a detail.** It appears in

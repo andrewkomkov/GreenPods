@@ -223,7 +223,7 @@ diagnostic and dump path grepped for a plausible BPM comes back empty.
 - [ ] T071 Compare ten minutes of readings at rest against a reference heart-rate monitor, name the reference device, and record the comparison in `docs/protocol-research.md` — SC-002. **Until this is done, accuracy is unclaimed, not assumed.**
 - [ ] T072 Measure accessory battery drain over an hour with the feature disabled against the app not installed, and at two cadences with it enabled; record both in `docs/protocol-research.md` — SC-006, FR-012
 - [ ] T073 Re-derive the confidence threshold from the sessions run in T070–T072 and replace the provisional 128 in `core/model/.../Settings.kt` with a measured value, or record why it stands — R-4, spec assumption
-- [ ] T074 Update `specs/003-heart-rate/spec.md` status and tick `specs/003-heart-rate/checklists/requirements.md` — Governance
+- [X] T074 Update `specs/003-heart-rate/spec.md` status and tick `specs/003-heart-rate/checklists/requirements.md` — done 2026-08-04. Status is "implemented; working on hardware", with SC-002 and SC-006 recorded as unclaimed rather than dropped; the checklist gained an Outcome section saying which items paid for themselves and which one (edge cases) was incomplete in a way review would not have caught — Governance
 
 ---
 
@@ -242,11 +242,34 @@ switch it off. If any of those needs a sentence of explanation, the UX has not p
 `GreenPodsMotion` — never raw `tween`/`spring` literals. Where 1.5.0 would do it better,
 record the swap in a comment rather than reaching for a pre-release.
 
-- [ ] T077 Audit every screen against the Material 3 Expressive guidance and fix what falls short, in `feature/pods/`, `feature/controls/`, `feature/settings/` and `core/designsystem/`: shape and corner language, the expressive type scale and emphasis, tonal and container colour roles, spacing rhythm, and component choice — replacing anything that is Material 3 baseline where an expressive equivalent exists in 1.4.0
-- [ ] T078 Make motion carry meaning, not decoration, in `core/designsystem/src/main/kotlin/io/github/andrewkomkov/greenpods/core/designsystem/theme/GreenPodsMotion.kt` and its consumers: the heart-rate card **breathes with the actual reading** rather than on a fixed loop; settling → measuring is a transition the eye follows rather than a value swap; uncertain visibly withdraws the number instead of blanking it; battery rings, capability chips and locked states share one spring vocabulary. Every animation answers "what changed and why"
-- [ ] T079 Rework the flows, not the pixels — the part that matters most: first-run enable (what it costs, stated before the switch moves), the settle wait (a wait with a visible reason beats a spinner), permission requests that ask once and explain first, the locked and unsupported states reading as facts about the hardware rather than as failures, and off being one obvious gesture from anywhere it is running. Walk each flow start to finish on the device and fix what makes you hesitate
-- [ ] T080 [P] Accessibility as part of expressive, not after it: TalkBack reads the heart-rate card as a state and not as a bare number, `SETTLING` is announced as measuring-in-progress, dynamic type to the largest setting leaves no clipped or overlapped text, contrast holds in light and dark, and no state is distinguished by colour alone — `feature/*` and `core/designsystem/`
+- [~] T077 Material 3 Expressive audit — **the code-checkable half is done, the visual half needs the device.** Verified by inspection across `feature/*` and `core/designsystem`: every animation goes through `GreenPodsMotion` (no raw `tween`/`spring` literal exists outside it), colour literals appear only in the palette definition itself, and the heart-rate card was moved from a bare `Row` onto a tonal `Surface` with `shapes.large` and an emphasis that follows the state (`HeartRateUi.Emphasis`, pinned by `HeartRateEmphasisTest`). What is **not** done and cannot be honestly claimed without looking at a screen: the expressive type scale and emphasis across `feature/controls` and `feature/settings`, spacing rhythm, and component-by-component replacement of baseline forms. Those are judgment calls about appearance, and this project's own rule is not to claim what has not been seen
+- [X] T078 Motion that carries meaning. `HeartBeatIcon` beats at the **measured rate** — its period is 60 000 / bpm, pinned by `HeartBeatIconTest` including the clamp that stops an implausible value strobing; a glance distinguishes 55 from 150 before the number is read. Settling → measuring is an `AnimatedContent` transition between three different leading marks rather than a value swap. Uncertain **withdraws** the number with `AnimatedVisibility` instead of blanking it, which is the difference between "no longer trustworthy" and "the app lost your reading". Container emphasis animates through `GreenPodsMotion.effects()`; no raw `tween`/`spring` literal was added — T081 still owes the on-device look
+- [~] T079 Flows, not pixels — **partially done; the walk-through is what decides and it did not happen.** Landed in code: the first-run cost is stated in the section subtitle *above* the switch (`HeartRateSettingsCopy.SECTION_SUBTITLE`, asserted by test), the notification limitation is disclosed rather than silent, the permission request explains before asking and remembers a refusal instead of nagging (`SettingsViewModelTest`), the settle wait now has a visible reason rather than a bare spinner, and an accessory that never described its sensor says so and says what to do about it instead of blaming the fit (`StopReason.NOT_DISCOVERED`). Not done: walking each flow end to end on the device and fixing what makes one hesitate, which is the part the task says matters most
+- [X] T080 Accessibility as part of expressive. The card is one merged node announced as a **state**, never a bare number, and is a polite `liveRegion` so settling → measuring is announced without interrupting. `HeartRateAccessibilityTest` pins the rules a screen reader has to honour: every state opens with "Heart rate", settling says "measuring in progress" and contains no digits, only a trusted reading is ever spoken as a number, uncertain says the reading was withdrawn rather than going silent, no two states sound alike, and the two routes are distinguishable by ear. `HeartRateEmphasisTest` pins that emphasis deliberately does *not* identify a state on its own — colour is additive to icon, copy and the presence of a number. Dynamic type and contrast are unverified: they need the device (T081)
 - [ ] T081 Verify the pass on the Pixel 8 with the buds in — record a short screen capture of enable → settle → measure → uncertain → off, and check the same flows with dark theme, largest font size and TalkBack on. Screenshots corroborate; the walk-through is what decides
+
+---
+
+## What is left, and why it is left — 2026-08-04
+
+Five tasks need the Pixel 8 and the AirPods, which became unavailable at the end of the
+session that made heart rate work. They are **not** closed, because closing them would
+mean claiming measurements that were never taken:
+
+| Task | Needs | Why it cannot be inferred |
+|---|---|---|
+| T066 | A measuring session, then the §6 sweep | The privacy claim is that *no* path leaks a reading. Grepping the code proves the paths that exist; the sweep proves there is no sixth one. |
+| T071 | A reference heart-rate monitor | SC-002. The decoded values are plausible and behave correctly; plausible is not measured, and this project's rule against inventing protocol facts applies just as much to trusting a decoded one. |
+| T072 | An hour at two cadences | SC-006. The battery cost of the sensor is the reason Apple only runs it during workouts, and it is still unmeasured here. |
+| T073 | T071 and T072 | The confidence threshold ships as the provisional 128 it started as. It cannot be re-derived from sessions that were not run. |
+| T081 | The buds, dark theme, largest font, TalkBack | The expressive pass judges how the feature *feels*, and no amount of unit testing sees a clipped label. |
+
+T077 and T079 are marked `[~]`: their code-checkable halves are done and tested, their
+visual halves need the same device. Each entry says exactly which half is which.
+
+**Nothing here is blocked on knowledge.** Every remaining item is blocked on hardware
+access alone, and each is a measurement with a defined procedure in
+[quickstart.md](./quickstart.md).
 
 ---
 
