@@ -342,10 +342,30 @@ capture:
 So the remaining unknown is narrow and specific: **the request that makes the accessory
 announce its HID services.** It is one frame. Until it is known, the AAP heart-rate route
 only completes on a channel some other client has already prompted, which is not a
-shippable dependency. Candidates worth capturing next, in order: whatever LibrePods sends
-before its head-tracking start, an `0x17` frame with a field 2 the accessory reads as a
-query, and the device-info request `0x001D` whose payload this project has also never
-captured.
+shippable dependency.
+
+**Ruled out, by reading LibrePods' source (`kavishdevar/librepods`, 2026-08-04):**
+
+- *That LibrePods asks for the descriptors.* It does not. `createStartHeadTrackingPacket`
+  hard-codes service `0x0E` and `createAlternateStartHeadTrackingPacket` hard-codes `0x10`,
+  with a user-facing "use alternate head tracking packets" preference to switch between
+  them — which is what guessing an id looks like when it reaches a settings screen, and
+  exactly what FR-002 exists to avoid. Their head-tracking *detector* is also the same
+  length-based test (`data[10] == 0x44 || 0x45`) that this project replaced with protobuf
+  field dispatch.
+- *That claiming the connection prompts them.* LibrePods sends control command
+  `OWNS_CONNECTION` (`0x06`) before starting head tracking, so it was the obvious
+  candidate. Sending `04 00 04 00 09 00 06 01 00 00 00` on a live channel produced **no
+  `0x17` frames and no echo of the command at all** — the accessory ignored it. Consistent
+  with LibrePods' own code, which refuses to attempt a takeover unless a Xposed
+  `vendor_id_hook` is making the phone report Apple's vendor id; unrooted, this route is
+  not available.
+
+**Still open**, in order of promise: that descriptors are sent once per *ACL* connection
+rather than per L2CAP channel, so they arrive only if the channel is already open when the
+buds reconnect from the case — this fits every observation so far and is testable with the
+buds in hand; the device-info request `0x001D`, whose payload this project has also never
+captured; and an `0x17` frame carrying a field 2 the accessory reads as a query.
 
 **This does not invalidate the decoders.** Everything downstream of a descriptor is
 verified against real hardware in the same session — see the field notes below.
