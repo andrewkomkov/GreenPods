@@ -15,6 +15,26 @@ internal object AapFixtures {
     /** The field-12 frame in which it says those services are up. */
     val readyFrame: ByteArray by lazy { section("aap/hid-descriptors.txt", "ready") }
 
+    /**
+     * The 2026-08-04 **live** capture: every `0x17` frame, in arrival order.
+     *
+     * Distinct from [descriptorFrame], which was transcribed into the contract by hand.
+     * This one came off the socket verbatim, and the two disagree — which is the whole
+     * reason it is here. When a hand-copied fixture and a device disagree, the device is
+     * right.
+     */
+    val liveDescriptorFrames: List<ByteArray> by lazy {
+        val frames = mutableListOf<StringBuilder>()
+        text("aap/hid-descriptors-live.txt").lineSequence().map(String::trim).forEach { line ->
+            when {
+                line.startsWith("# frame") -> frames += StringBuilder()
+                line.startsWith("#") || line.isEmpty() -> Unit
+                else -> frames.lastOrNull()?.append(' ')?.append(line)
+            }
+        }
+        frames.map { hex(it.toString()) }
+    }
+
     /** The heart-rate service's own 126-byte HID report descriptor, verbatim. */
     val heartRateReportDescriptor: ByteArray by lazy { hexBody("aap/hr-report-descriptor.txt") }
 
