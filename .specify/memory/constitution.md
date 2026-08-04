@@ -10,15 +10,24 @@ carry. The constitution is what keeps that situation honest instead of magical.
 ### I. The transport gate is the law
 
 Three independent transports exist — `BLE_ADVERTISEMENT` (always available, read-only),
-`GATT` (always available, heart rate on Powerbeats Pro 2 only), and `AAP_L2CAP` (usually
-unavailable on unrooted devices, the only one that can write).
+`GATT` (always available, heart rate on Powerbeats Pro 2 only), and `AAP_L2CAP` (available
+on current Android without root, the only one that can write).
 
 No feature may assume a transport. Availability is probed, cached with its reason, and
 exposed as data. `PodState.usableFeatures` and `PodState.gatedFeatures` are the single
 source of truth for what the UI may offer; `PodModel.features` alone never is.
 
 Failure to open the AAP channel is a **normal outcome**. It is reported as a gate, never
-as a crash, an error toast, or a retry storm.
+as a crash, an error toast, or a retry storm. This holds even though the channel now
+usually opens: it depends on a hidden platform constructor and a non-SDK exemption, both
+of which an Android release can move.
+
+A **live session outranks a probe**. A probe predicts; a session is evidence. A stale
+failed probe must never keep features locked while traffic is flowing.
+
+A write is not a change. Nothing is reported as applied until the accessory confirms it —
+"accepted but never echoed" is this transport's characteristic failure, and the whole
+discipline above is worthless if it is mistaken for success.
 
 ### II. Locked, not hidden
 
@@ -48,6 +57,12 @@ Nothing is invented to fill a protocol gap. If a frame layout is not decoded —
 the AAP heart-rate measurement — the feature is absent and documented as absent, not
 approximated. Values that *are* approximations (`HeadPoseMapper.SCALE`) say so in the
 code that carries them.
+
+This cuts both ways, and the harder direction is the one that cost this project a year:
+an absence must not be documented as an impossibility. "We could not open the channel"
+was written down as "the stack refuses it and it needs root", and that conclusion then
+bounded every decision until it was tested. Record what was observed, and keep what was
+inferred from it visibly separate.
 
 ### VI. Driveable and observable over adb (NON-NEGOTIABLE)
 
@@ -79,6 +94,12 @@ A feature that cannot be driven from adb is not finished.
 The baseline experience requires no pairing, no root, no Magisk module, no Xposed hook,
 and no location permission on API 31+. Anything beyond that baseline degrades to the
 baseline instead of blocking the app.
+
+Reaching the Apple protocol needs a scoped non-SDK exemption for `android.bluetooth`.
+That stays inside this principle — it is an app-local runtime flag, not a permission and
+not a system modification, and every Bluetooth permission is still enforced. It is kept
+narrow to two class prefixes rather than opening the framework, and features that would
+need genuine root, such as anything behind vendor-identity spoofing, remain out of scope.
 
 ## Technical Constraints
 
@@ -113,4 +134,10 @@ Amendments require updating this file and any spec it invalidates in the same ch
 What is learned about the protocol is written to `docs/protocol-research.md`; that file
 is the project's memory and is updated in the same commit as the code that learned it.
 
-**Version**: 1.0.0 | **Ratified**: 2026-08-03 | **Last Amended**: 2026-08-03
+**Version**: 1.1.0 | **Ratified**: 2026-08-03 | **Last Amended**: 2026-08-04
+
+Amendment 1.1.0 — the AAP channel was shown to work on unrooted Android. Principle I no
+longer describes it as usually unavailable, and gains the two rules that failure taught:
+a live session outranks a probe, and a write is not a change until the accessory confirms
+it. Principle V gains the converse of "no fiction": an absence must not be recorded as an
+impossibility. Principle VII places the non-SDK exemption inside the unrooted baseline.
