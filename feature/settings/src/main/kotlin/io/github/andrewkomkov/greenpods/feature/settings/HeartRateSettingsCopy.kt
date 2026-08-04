@@ -19,10 +19,18 @@ package io.github.andrewkomkov.greenpods.feature.settings
 object HeartRateSettingsCopy {
     const val SECTION_TITLE = "Heart rate"
 
+    /**
+     * Names no protocol.
+     *
+     * "Over Apple's protocol" was true and useless: it cannot be turned on, off, or
+     * worked around by the person reading it, and the two things that *can* be acted on
+     * — that it costs the earbuds' battery and that it keeps a background service alive —
+     * were competing with it for the same glance.
+     */
     const val SECTION_SUBTITLE =
-        "Reads the earbuds' optical sensor over Apple's protocol — no workout needed. " +
-            "It runs continuously while you wear them, which uses the earbuds' battery, " +
-            "and keeps GreenPods monitoring in the background while it is on."
+        "Reads the sensor in your earbuds — no workout needed. It runs while you wear " +
+            "them, which uses their battery, and keeps GreenPods watching in the " +
+            "background."
 
     const val ENABLE_TITLE = "Measure heart rate"
     const val ENABLE_DESCRIPTION = "Off until you ask for it."

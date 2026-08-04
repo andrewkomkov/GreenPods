@@ -3,16 +3,15 @@ package io.github.andrewkomkov.greenpods.feature.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.andrewkomkov.greenpods.core.data.PodRepository
-import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticEvent
-import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.health.HealthConnectLink
 import io.github.andrewkomkov.greenpods.core.data.settings.SettingsRepository
 import io.github.andrewkomkov.greenpods.core.data.update.UpdateSource
 import io.github.andrewkomkov.greenpods.core.data.update.UpdateStatus
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.HeadGestureBinding
+import io.github.andrewkomkov.greenpods.core.model.PodFeature
+import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.ScanMode
-import io.github.andrewkomkov.greenpods.core.model.TransportStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -23,15 +22,40 @@ import kotlinx.coroutines.launch
 
 data class SettingsUiState(
     val settings: GreenPodsSettings = GreenPodsSettings.Default,
-    val transports: List<TransportStatus> = emptyList(),
     val deviceName: String = "",
     val podAddress: String? = null,
-    val diagnostics: List<DiagnosticEvent> = emptyList(),
+    val capabilities: CapabilitiesUiState = CapabilitiesUiState(),
     val appVersion: String = "",
     val checkingUpdate: Boolean = false,
     val updateSummary: String = "",
     val updateUrl: String? = null,
     val health: HealthUiState = HealthUiState(),
+)
+
+/**
+ * What this phone can do with these earbuds, in features rather than in transports.
+ *
+ * The screen used to list the three transports and their availability, which answered a
+ * question only a maintainer asks. A user asks whether noise control works, and the
+ * honest answer to that has nothing to do with the word L2CAP: it is a list of what
+ * works, a list of what does not, and one sentence about the phone.
+ */
+data class CapabilitiesUiState(
+    val alwaysWorks: List<String> = emptyList(),
+    val available: List<String> = emptyList(),
+    val locked: List<LockedCapabilities> = emptyList(),
+    /** True once an accessory has been seen; before that there is nothing to report. */
+    val known: Boolean = false,
+) {
+    /** Head gestures ride head tracking, which is the first thing a stock stack refuses. */
+    val headGesturesLocked: Boolean
+        get() = locked.any { group -> PodFeature.HEAD_TRACKING.displayName in group.features }
+}
+
+/** Features that are out of reach for the same reason, and that reason. */
+data class LockedCapabilities(
+    val features: List<String>,
+    val sentence: String,
 )
 
 /**
@@ -56,17 +80,17 @@ data class HealthUiState(
 )
 
 /**
- * Settings, diagnostics and updates.
+ * Settings, what this phone can reach, and updates.
  *
- * The diagnostics half is not a debugging afterthought — it is where the transport gate
- * explains itself and where undecoded protocol traffic surfaces. For a project built on
- * reverse-engineering, that log is how the next packet definition gets found, so it is
- * a first-class part of the screen rather than a hidden developer option.
+ * Undecoded protocol traffic still reaches `DiagnosticsLog` — it is how new protocol
+ * behaviour gets found, and nothing about that has changed. What changed is where it is
+ * read: from adb, by whoever can act on it, rather than from a card underneath someone's
+ * auto-pause switch. A hex dump on a product screen is not transparency; it is a
+ * maintainer's console left in the room.
  */
 class SettingsViewModel(
     private val settingsRepository: SettingsRepository,
     private val podRepository: PodRepository,
-    private val diagnosticsLog: DiagnosticsLog,
     private val updateChecker: UpdateSource,
     private val appVersion: String,
     /**
@@ -91,16 +115,14 @@ class SettingsViewModel(
         combine(
             settingsRepository.settings,
             podRepository.primaryPod,
-            diagnosticsLog.events,
             updateState,
             healthState,
-        ) { settings, pod, events, update, healthUi ->
+        ) { settings, pod, update, healthUi ->
             SettingsUiState(
                 settings = settings,
-                transports = pod?.transportStatuses.orEmpty(),
                 deviceName = pod?.name.orEmpty(),
                 podAddress = pod?.address,
-                diagnostics = events,
+                capabilities = pod.capabilities(),
                 appVersion = appVersion,
                 checkingUpdate = update.checking,
                 updateSummary = update.summary,
@@ -201,8 +223,6 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.updateBinding(binding) }
     }
 
-    fun clearDiagnostics() = diagnosticsLog.clear()
-
     /**
      * Re-runs the transport probe for the accessory currently in range.
      *
@@ -241,7 +261,49 @@ class SettingsViewModel(
         viewModelScope.launch { settingsRepository.update(transform) }
     }
 
+    /**
+     * The accessory's features, split into what works here and what does not.
+     *
+     * Ear detection is folded into the line that is true on every phone rather than
+     * listed as a capability of its own: it rides the advertisement, which needs no
+     * pairing and no permission the app does not already hold, so it can be promised
+     * without qualification. Everything else is grouped by *why* it is locked, because
+     * two features refused by two different transports are two different situations and
+     * one of them may be fixable.
+     */
+    private fun PodState?.capabilities(): CapabilitiesUiState {
+        if (this == null) return CapabilitiesUiState()
+
+        val locked =
+            gatedFeatures
+                .groupBy { feature -> lockSentenceFor(feature) }
+                .map { (sentence, features) ->
+                    LockedCapabilities(features.map { it.displayName }.sorted(), sentence)
+                }.sortedBy { it.sentence }
+
+        return CapabilitiesUiState(
+            alwaysWorks = listOf(ALWAYS_WORKS),
+            available =
+                usableFeatures
+                    .filter { it != PodFeature.EAR_DETECTION }
+                    .map { it.displayName }
+                    .sorted(),
+            locked = locked,
+            known = true,
+        )
+    }
+
     private companion object {
         const val SUBSCRIPTION_TIMEOUT_MS = 5_000L
+
+        /**
+         * What no phone can take away.
+         *
+         * These three ride Apple's proximity advertisement, which is broadcast to
+         * everything in range and needs no pairing, no channel and no permission beyond
+         * the scan the app already asks for. It is worth stating on its own line: it is
+         * the floor under every other answer on this screen.
+         */
+        const val ALWAYS_WORKS = "Battery, ear detection and auto-pause"
     }
 }

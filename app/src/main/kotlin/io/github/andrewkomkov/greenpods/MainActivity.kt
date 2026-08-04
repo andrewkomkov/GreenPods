@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
                 GreenPodsApp(
                     onRequestPermission = ::requestPermissions,
                     onOpenUrl = ::openUrl,
+                    onOpenBluetoothSettings = ::openBluetoothSettings,
                 )
             }
         }
@@ -119,5 +121,17 @@ class MainActivity : ComponentActivity() {
 
     private fun openUrl(url: String) {
         runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+    }
+
+    /**
+     * Opens the system's Bluetooth settings.
+     *
+     * Rather than asking to enable Bluetooth directly: that request was deprecated, and
+     * an app switching a radio on from under the user is worse behaviour than showing
+     * them the switch. Wrapped because a phone with no Bluetooth settings activity is
+     * unusual but not impossible, and a crash there would be absurd.
+     */
+    private fun openBluetoothSettings() {
+        runCatching { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
     }
 }

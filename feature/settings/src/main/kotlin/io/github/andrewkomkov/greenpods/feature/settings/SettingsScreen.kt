@@ -13,9 +13,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryAlert
-import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Pause
@@ -30,6 +32,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -41,8 +44,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.andrewkomkov.greenpods.core.designsystem.component.LockedSurface
 import io.github.andrewkomkov.greenpods.core.designsystem.component.SectionCard
 import io.github.andrewkomkov.greenpods.core.designsystem.component.SwitchRow
 import io.github.andrewkomkov.greenpods.core.model.GestureAction
@@ -50,12 +55,14 @@ import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.HeadGesture
 import io.github.andrewkomkov.greenpods.core.model.HeadGestureBinding
 import io.github.andrewkomkov.greenpods.core.model.ScanMode
-import io.github.andrewkomkov.greenpods.core.model.TransportAvailability
-import io.github.andrewkomkov.greenpods.core.model.TransportStatus
 
 /**
- * Settings, head-gesture bindings, and the diagnostics that explain why a feature is
- * unavailable on this particular phone.
+ * Settings, head-gesture bindings, and a plain answer to "what works on my phone".
+ *
+ * There is no diagnostics section. Undecoded traffic still reaches the log — it is how
+ * new protocol behaviour gets found — but it is read from adb by whoever can act on it,
+ * not from a card under someone's auto-pause switch. Nothing on this screen asks the
+ * reader to know how Bluetooth works.
  */
 @Composable
 fun SettingsScreen(
@@ -71,7 +78,6 @@ fun SettingsScreen(
     onHeadGesturesChanged: (Boolean) -> Unit = {},
     onBindingChanged: (HeadGestureBinding) -> Unit = {},
     onRecheckTransports: () -> Unit = {},
-    onClearDiagnostics: () -> Unit = {},
     onCheckForUpdates: () -> Unit = {},
     onOpenUpdate: (String) -> Unit = {},
     onHeartRateChanged: (Boolean) -> Unit = {},
@@ -116,17 +122,16 @@ fun SettingsScreen(
 
         GestureSection(
             settings = state.settings,
+            locked = state.capabilities.headGesturesLocked,
             onHeadGesturesChanged = onHeadGesturesChanged,
             onBindingChanged = onBindingChanged,
         )
 
-        TransportSection(
-            transports = state.transports,
+        CapabilitiesSection(
+            capabilities = state.capabilities,
             deviceName = state.deviceName,
             onRecheck = onRecheckTransports,
         )
-
-        DiagnosticsSection(state = state, onClear = onClearDiagnostics)
 
         UpdateSection(
             state = state,
@@ -145,9 +150,7 @@ private fun EarDetectionSection(
 ) {
     SectionCard(
         title = "Ear detection",
-        subtitle =
-            "Driven by the advertisement AirPods broadcast, so this works on every phone — " +
-                "no pairing and no root.",
+        subtitle = "Works on every phone — nothing to pair, nothing to allow.",
         icon = Icons.Filled.Pause,
     ) {
         SwitchRow(
@@ -186,7 +189,7 @@ private fun MonitoringSection(
     ) {
         SwitchRow(
             title = "Keep watching in the background",
-            description = "Runs an ongoing notification and keeps scanning.",
+            description = "Shows an ongoing notification.",
             checked = settings.backgroundMonitoringEnabled,
             onCheckedChange = onBackgroundMonitoringChanged,
         )
@@ -358,8 +361,8 @@ private fun ScanSection(
     onScanModeChanged: (ScanMode) -> Unit,
 ) {
     SectionCard(
-        title = "Scanning",
-        subtitle = "How hard the radio looks for advertisements. Faster costs battery.",
+        title = "Looking for earbuds",
+        subtitle = "How often GreenPods checks. Faster costs phone battery.",
         icon = Icons.Filled.Radar,
     ) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -374,31 +377,84 @@ private fun ScanSection(
     }
 }
 
+/**
+ * Head gestures, and the fact that most phones will never carry them.
+ *
+ * Locked, this section wears the same outline-and-hatch as every other locked surface in
+ * the app rather than simply greying out. Greyed-out is what a switch looks like when
+ * some *other* switch above it is off — a state the user can fix by looking harder. This
+ * one they cannot fix at all, and saying so is kinder than letting them hunt.
+ */
 @Composable
 private fun GestureSection(
     settings: GreenPodsSettings,
+    locked: Boolean,
     onHeadGesturesChanged: (Boolean) -> Unit,
     onBindingChanged: (HeadGestureBinding) -> Unit,
 ) {
-    SectionCard(
-        title = "Head gestures",
-        subtitle =
-            "Nod to accept, shake to reject. Needs head tracking, which only the Apple " +
-                "protocol carries — so these stay inactive unless that channel opens.",
-        icon = Icons.Filled.Face,
-    ) {
-        SwitchRow(
-            title = "Act on head gestures",
-            checked = settings.headGesturesEnabled,
-            onCheckedChange = onHeadGesturesChanged,
-        )
-        settings.gestureBindings.forEach { binding ->
-            GestureBindingRow(
-                binding = binding,
-                enabled = settings.headGesturesEnabled,
-                onChanged = onBindingChanged,
-            )
+    val subtitle =
+        if (locked) {
+            "Nod to accept a call, shake to reject. This phone can't read head movement " +
+                "from your earbuds, so these stay off."
+        } else {
+            "Nod to accept a call, shake to reject."
         }
+
+    if (locked) {
+        LockedSurface {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(Icons.Filled.Face, contentDescription = null)
+                    Column {
+                        Text(
+                            "Head gestures",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Column(
+                    modifier = Modifier.alpha(LOCKED_ALPHA),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    GestureRows(settings, enabled = false, onHeadGesturesChanged, onBindingChanged)
+                }
+            }
+        }
+        return
+    }
+
+    SectionCard(title = "Head gestures", subtitle = subtitle, icon = Icons.Filled.Face) {
+        GestureRows(settings, enabled = true, onHeadGesturesChanged, onBindingChanged)
+    }
+}
+
+@Composable
+private fun GestureRows(
+    settings: GreenPodsSettings,
+    enabled: Boolean,
+    onHeadGesturesChanged: (Boolean) -> Unit,
+    onBindingChanged: (HeadGestureBinding) -> Unit,
+) {
+    SwitchRow(
+        title = "Act on head gestures",
+        checked = settings.headGesturesEnabled && enabled,
+        onCheckedChange = onHeadGesturesChanged,
+        enabled = enabled,
+    )
+    settings.gestureBindings.forEach { binding ->
+        GestureBindingRow(
+            binding = binding,
+            enabled = enabled && settings.headGesturesEnabled,
+            onChanged = onBindingChanged,
+        )
     }
 }
 
@@ -447,78 +503,78 @@ private fun GestureBindingRow(
     }
 }
 
+/**
+ * What works with this phone, said once, in features.
+ *
+ * The three transports and their availability used to be listed here. That told the
+ * reader which of GreenPods' three ways of talking to the earbuds had succeeded — a fact
+ * about the app's plumbing, not about their phone. This answers the question they came
+ * with: what can I do, what can I not do, and is anything wrong with my earbuds.
+ *
+ * The re-check stays because a probe can genuinely change its answer: a channel another
+ * app was holding gets released, a pairing completes. It is one button, and it says what
+ * it does.
+ */
 @Composable
-private fun TransportSection(
-    transports: List<TransportStatus>,
+private fun CapabilitiesSection(
+    capabilities: CapabilitiesUiState,
     deviceName: String,
     onRecheck: () -> Unit,
 ) {
     SectionCard(
-        title = "What this phone can do",
-        subtitle = deviceName.ifBlank { "No accessory in range." },
-        icon = Icons.Filled.Radar,
+        title = "What works with this phone",
+        subtitle = deviceName.ifBlank { "No earbuds in range." },
+        icon = Icons.Filled.Headphones,
     ) {
-        if (transports.isEmpty()) {
+        if (!capabilities.known) {
             Text(
-                "Transport status appears once an accessory is nearby.",
+                "Open your case nearby and this fills in.",
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            return@SectionCard
         }
-        transports.forEach { status ->
-            Column {
-                Text(
-                    "${status.transport.displayName} — ${status.availability.label()}",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color =
-                        when (status.availability) {
-                            TransportAvailability.AVAILABLE -> MaterialTheme.colorScheme.primary
-                            TransportAvailability.UNAVAILABLE -> MaterialTheme.colorScheme.error
-                            TransportAvailability.NOT_PROBED -> MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+
+        (capabilities.alwaysWorks + capabilities.available).forEach { feature ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
                 )
-                Text(
-                    status.reason,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Text(feature, style = MaterialTheme.typography.bodyMedium)
             }
         }
-        Button(onClick = onRecheck, enabled = transports.isNotEmpty()) { Text("Check again") }
-    }
-}
 
-@Composable
-private fun DiagnosticsSection(
-    state: SettingsUiState,
-    onClear: () -> Unit,
-) {
-    SectionCard(
-        title = "Diagnostics",
-        subtitle =
-            "Traffic GreenPods could not decode. This is how new protocol behaviour gets " +
-                "found, so nothing is dropped silently.",
-        icon = Icons.Filled.BugReport,
-    ) {
-        if (state.diagnostics.isEmpty()) {
-            Text("Nothing recorded yet.", style = MaterialTheme.typography.bodyMedium)
-        }
-        state.diagnostics.take(DIAGNOSTICS_SHOWN).forEach { event ->
-            Column {
-                Text(
-                    "[${event.category.name}] ${event.message}",
-                    style = MaterialTheme.typography.bodySmall,
+        capabilities.locked.forEach { group ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (event.detail.isNotBlank()) {
+                Column(Modifier.weight(1f)) {
                     Text(
-                        event.detail,
-                        style = MaterialTheme.typography.labelSmall,
+                        group.features.joinToString(", "),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        group.sentence,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
             }
         }
-        TextButton(onClick = onClear, enabled = state.diagnostics.isNotEmpty()) { Text("Clear") }
+
+        OutlinedButton(onClick = onRecheck) { Text("Check again") }
     }
 }
 
@@ -555,13 +611,6 @@ private fun ScanMode.label(): String =
         ScanMode.LOW_LATENCY -> "Fastest"
     }
 
-private fun TransportAvailability.label(): String =
-    when (this) {
-        TransportAvailability.AVAILABLE -> "available"
-        TransportAvailability.UNAVAILABLE -> "unavailable"
-        TransportAvailability.NOT_PROBED -> "not checked"
-    }
-
 private fun GestureAction.label(): String = name.humanise()
 
 private fun HeadGesture.label(): String = name.humanise()
@@ -573,4 +622,5 @@ private fun String.humanise(): String =
         .joinToString(" ")
         .replaceFirstChar(Char::uppercase)
 
-private const val DIAGNOSTICS_SHOWN = 20
+/** Legible, and plainly not a switch this phone will move. */
+private const val LOCKED_ALPHA = 0.55f

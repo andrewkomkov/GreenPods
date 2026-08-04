@@ -3,11 +3,13 @@ package io.github.andrewkomkov.greenpods.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -27,8 +29,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.github.andrewkomkov.greenpods.GreenPodsApplication
+import io.github.andrewkomkov.greenpods.core.model.HeartRateState
 import io.github.andrewkomkov.greenpods.feature.controls.ControlsScreen
 import io.github.andrewkomkov.greenpods.feature.controls.ControlsViewModel
+import io.github.andrewkomkov.greenpods.feature.pods.HeartRateScreen
+import io.github.andrewkomkov.greenpods.feature.pods.HeartRateUi
 import io.github.andrewkomkov.greenpods.feature.pods.PodsScreen
 import io.github.andrewkomkov.greenpods.feature.pods.PodsViewModel
 import io.github.andrewkomkov.greenpods.feature.settings.SettingsScreen
@@ -58,10 +63,16 @@ fun GreenPodsApp(
     onRequestPermission: () -> Unit,
     onOpenUrl: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onOpenBluetoothSettings: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val current = backStackEntry?.destination
+
+    // The heart-rate view is pushed on top of the pods tab rather than being a fourth
+    // one: it is the card the user just tapped, made bigger, and a tab would imply a
+    // place they can go without a reading to look at.
+    val onHeartRate = current?.hierarchy?.any { it.route == HEART_RATE_ROUTE } == true
 
     Scaffold(
         modifier = modifier,
@@ -69,12 +80,27 @@ fun GreenPodsApp(
             TopAppBar(
                 title = {
                     Text(
-                        GreenPodsDestination.entries
-                            .firstOrNull { destination ->
-                                current?.hierarchy?.any { it.route == destination.route } == true
-                            }?.let { if (it == GreenPodsDestination.PODS) "GreenPods" else it.label }
-                            ?: "GreenPods",
+                        when {
+                            onHeartRate -> {
+                                "Heart rate"
+                            }
+
+                            else -> {
+                                GreenPodsDestination.entries
+                                    .firstOrNull { destination ->
+                                        current?.hierarchy?.any { it.route == destination.route } == true
+                                    }?.let { if (it == GreenPodsDestination.PODS) "GreenPods" else it.label }
+                                    ?: "GreenPods"
+                            }
+                        },
                     )
+                },
+                navigationIcon = {
+                    if (onHeartRate) {
+                        IconButton(onClick = { navController.popBackStack() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
                 },
             )
         },
@@ -111,12 +137,31 @@ fun GreenPodsApp(
                 PodsScreen(
                     state = state,
                     onRequestPermission = onRequestPermission,
+                    onOpenBluetoothSettings = onOpenBluetoothSettings,
+                    onRetryScan = viewModel::retryScan,
                     onPodSelected = { pod ->
                         viewModel.probeTransports(pod.address)
                         navController.navigate(GreenPodsDestination.CONTROLS.route) {
                             launchSingleTop = true
                         }
                     },
+                    onOpenHeartRate = {
+                        navController.navigate(HEART_RATE_ROUTE) { launchSingleTop = true }
+                    },
+                    onTurnOnHeartRate = { viewModel.setHeartRateEnabled(true) },
+                )
+            }
+
+            composable(HEART_RATE_ROUTE) {
+                val viewModel: PodsViewModel = viewModel(factory = GreenPodsViewModels.pods())
+                val state by viewModel.state.collectAsStateWithLifecycle()
+                val pod = state.pods.firstOrNull()
+
+                HeartRateScreen(
+                    ui = pod?.let(state::heartRateOf) ?: HeartRateUi.of(HeartRateState.Off),
+                    intervalMillis = state.heartRateIntervalMillis,
+                    onStop = { viewModel.setHeartRateEnabled(false) },
+                    onStart = { viewModel.setHeartRateEnabled(true) },
                 )
             }
 
@@ -159,7 +204,6 @@ fun GreenPodsApp(
                     onHeadGesturesChanged = viewModel::setHeadGesturesEnabled,
                     onBindingChanged = viewModel::updateBinding,
                     onRecheckTransports = viewModel::recheckTransports,
-                    onClearDiagnostics = viewModel::clearDiagnostics,
                     onCheckForUpdates = viewModel::checkForUpdates,
                     onOpenUpdate = onOpenUrl,
                     onHeartRateChanged = viewModel::setHeartRateEnabled,
@@ -172,3 +216,6 @@ fun GreenPodsApp(
         }
     }
 }
+
+/** Not a tab: the heart-rate card at full size, pushed over the pods list. */
+private const val HEART_RATE_ROUTE = "heart-rate"

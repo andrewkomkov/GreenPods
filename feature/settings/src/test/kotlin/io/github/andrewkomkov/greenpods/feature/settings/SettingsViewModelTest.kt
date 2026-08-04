@@ -139,7 +139,6 @@ class SettingsViewModelTest {
         return SettingsViewModel(
             settingsRepository = settings,
             podRepository = pods,
-            diagnosticsLog = diagnostics,
             updateChecker = checker,
             appVersion = "1.0.0",
             health = health,
@@ -197,23 +196,26 @@ class SettingsViewModelTest {
         }
 
     @Test
-    fun `undecoded traffic is visible on the settings screen`() =
+    fun `undecoded traffic is recorded, and stays off the settings screen`() =
         runTest(dispatcher) {
+            // Both halves matter. Nothing may be dropped silently — that log is how the
+            // next packet definition gets found — and none of it may surface here, where
+            // a hex dump under someone's auto-pause switch is a maintainer's console left
+            // in a product. The screen is not a filtered view of the log; it is not a
+            // view of the log at all.
             val diagnostics = DiagnosticsLog(clock = { 0L })
             val viewModel = viewModel(diagnostics = diagnostics)
 
             viewModel.state.test(timeout = settled) {
-                awaitItem()
+                val before = awaitItem()
                 diagnostics.record(DiagnosticCategory.UNKNOWN_TRAFFIC, "Control 0x99 has no decoder", "04 00 99")
-
-                var state = awaitItem()
-                while (state.diagnostics.isEmpty()) state = awaitItem()
-
-                state.diagnostics.single().message shouldContain "0x99"
-                viewModel.clearDiagnostics()
                 advanceUntilIdle()
 
-                while (state.diagnostics.isNotEmpty()) state = awaitItem()
+                diagnostics.events.value
+                    .single()
+                    .message shouldContain "0x99"
+                expectNoEvents()
+                before.deviceName shouldBe ""
                 cancelAndIgnoreRemainingEvents()
             }
         }

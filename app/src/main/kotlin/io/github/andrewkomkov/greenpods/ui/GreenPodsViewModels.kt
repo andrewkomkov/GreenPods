@@ -23,6 +23,7 @@ object GreenPodsViewModels {
                 PodsViewModel(
                     repository = app.podRepository,
                     environment = app.environmentMonitor.state,
+                    settings = app.settingsRepository,
                 )
             }
         }
@@ -45,7 +46,6 @@ object GreenPodsViewModels {
                 SettingsViewModel(
                     settingsRepository = app.settingsRepository,
                     podRepository = app.podRepository,
-                    diagnosticsLog = app.diagnostics,
                     updateChecker = app.updateChecker,
                     appVersion = app.versionName,
                     health = app.healthConnectLink,
