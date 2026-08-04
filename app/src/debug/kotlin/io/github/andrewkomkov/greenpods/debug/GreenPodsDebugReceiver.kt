@@ -81,6 +81,10 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                 anc(app, intent.getStringExtra("value").orEmpty())
             }
 
+            "raw" -> {
+                raw(app, intent.getStringExtra("hex").orEmpty())
+            }
+
             else -> {
                 reply(
                     "unknown command '$command'. Known: dump, probe, set, inject, monitor, clear, " +
@@ -164,6 +168,36 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
             reply(
                 "anc: wrote $mode to ${pod.address} -> accepted=$written, accessory reports ${echoed ?: "nothing yet"}",
             )
+        }
+    }
+
+    /**
+     * Sends a hand-assembled AAP frame over the live session.
+     *
+     * The protocol is only partly decoded, so the way to find out what a frame does is to
+     * send it and watch the reply — turn frame logging on first:
+     *
+     * ```
+     * adb shell setprop log.tag.AapTransport DEBUG
+     * ```
+     */
+    private fun raw(
+        app: GreenPodsApplication,
+        hex: String,
+    ) {
+        val packet = parseHex(hex)
+        if (packet.isEmpty()) {
+            reply("raw: no bytes parsed from '$hex'")
+            return
+        }
+        app.applicationScope.launch {
+            val pod = app.awaitPods(DEFAULT_WAIT_MILLIS).firstOrNull()
+            if (pod == null) {
+                reply("raw: no accessory in range")
+                return@launch
+            }
+            val sent = app.controlGateway.sendRaw(pod.address, packet)
+            reply("raw: ${packet.size} bytes to ${pod.address} -> accepted=$sent")
         }
     }
 

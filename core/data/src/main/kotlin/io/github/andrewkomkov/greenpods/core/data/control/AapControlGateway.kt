@@ -105,6 +105,18 @@ class AapControlGateway(
         modes: Set<NoiseControlMode>,
     ): Boolean = withChannel(address) { session.setListeningModeCycle(modes) }
 
+    /**
+     * Sends a packet the caller assembled itself, over the ordinary session.
+     *
+     * For protocol work: the frames that are not decoded yet can only be characterised by
+     * sending them and reading the reply, and doing that over the real session is what
+     * makes the result mean anything.
+     */
+    suspend fun sendRaw(
+        address: String,
+        packet: ByteArray,
+    ): Boolean = withChannel(address) { session.send(packet) }
+
     private suspend fun withChannel(
         address: String,
         write: suspend () -> Boolean,

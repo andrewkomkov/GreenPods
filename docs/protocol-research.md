@@ -96,20 +96,96 @@ followed by a real HID report descriptor. Decoded:
 | `1A 04 01 2A 05 01 81 00` | Input: measurement-confidence style enum |
 
 So BPM is a single byte in a HID input report, and the accessory publishes the layout
-itself. This is **unverified against live readings** — the descriptor says how a report
-is shaped, not that a report has been seen. Two things still have to be established:
+itself.
 
-1. Which AAP frame carries the HID *reports* (as opposed to these descriptors).
-2. Whether `HRM_STATE` alone starts the stream, or whether the report-interval feature
-   report has to be written first. The descriptor exposing report interval as a
-   *feature* report is a strong hint that setting it is how a host asks for data — which
-   is the ordinary HID sensor contract, not an Apple invention.
+### Heart rate, decoded and streaming — 2026-08-04
 
-The observed value on a connected, idle device is `09 00 30 01 00 00 00` — `HRM_STATE`
-already `1` — while no measurements arrive, which is consistent with the sensor being
-enabled but not reporting until asked at an interval.
+**Solved.** Writing the report-interval feature report starts the stream. No workout, no
+Apple device, no root. Captured from AirPods Pro 3 on an unrooted Pixel 8.
 
-### The workout gate is host policy, not accessory firmware
+Opcode `0x17` is not "head tracking"; it is a HID-over-AAP transport carrying several
+sensor services, and head tracking is only one of them. Frames are protobuf:
+
+```
+04 00 04 00 | 17 00 | 00 00 10 00 | <len u16 LE> | <protobuf>
+```
+
+To **start** a service, send field 8 containing the service id, an operation, and a
+feature report holding a 32-bit report interval in microseconds:
+
+```
+08 78                      seq (arbitrary, echoed back incremented)
+42 0B                      field 8, length 11
+   08 13                     service id — 0x13 is HeartRateService
+   10 02                     operation: set feature report
+   1A 05                     field 3, length 5
+      01                       report id
+      40 42 0F 00              interval, µs, LE — 0x000F4240 = 1 000 000 = 1 Hz
+```
+
+Whole frame, 1 Hz heart rate:
+`04 00 04 00 17 00 00 00 10 00 0F 00 08 78 42 0B 08 13 10 02 1A 05 01 40 42 0F 00`
+
+**Interval 0 stops the stream.** That is the whole on/off mechanism, and it is the same
+one head tracking uses — LibrePods' start/stop packets are this frame with service `0x0E`
+and interval `0x9C40` (40 ms, 25 Hz).
+
+**Service ids differ per model.** On AirPods Pro 3 the accessory advertises `0x10`
+(devmotion — head tracking), `0x11` (SPL0), `0x12` (HostLibHID), `0x13` (HeartRate).
+LibrePods' primary head-tracking packet uses `0x0E`, which this model ignores silently,
+which is why they carry an "alternate" packet using `0x10`. **Read the service ids from
+the descriptors; do not hard-code them.**
+
+Input reports arrive as field 7:
+
+```
+3A 16  08 13  1A 12  <18-byte report>
+       service  report
+```
+
+The report layout, matching the HID descriptor field for field:
+
+| Offset | Size | Meaning |
+|---|---|---|
+| 0 | 1 | Report id (`0x01`) |
+| 1 | 1 | **Heart rate, BPM** (usage `0x04B8`) |
+| 2 | 1 | **Confidence** — low while the sensor settles, ~230-240 once locked |
+| 3 | 2 | Sequence counter, LE, +1 per report |
+| 5 | 1 | Status enum, observed constant `0x02` |
+| 6 | 8 | Timestamp, nanoseconds, LE |
+| 14 | 4 | Vendor field, observed constant `00 20 00 00` |
+
+A real capture, one report per second, showing why confidence matters:
+
+```
+bpm  conf  seq   timestamp_ns
+169    20    0   56339327885000
+147    20    1   56340327882000   +1.000s
+128    20    2   56341327878000   +1.000s
+ 96    20    3   56342327872000   +1.000s
+ 94   156    4   56343327870000   +1.000s
+ 94   205    7   56346327866000
+ 91   233   12   56351327804000
+ 81   237   23   56362327729000
+```
+
+The first four readings are the optical sensor settling and are **wrong** — 169 BPM from
+someone sitting still. Confidence is `20` for exactly those readings and climbs as the
+value converges. **Any implementation must gate on the confidence byte**, or it will open
+by showing the user a heart rate of 169.
+
+Timestamps are exactly 1.000 s apart, which confirms the interval field controls the rate
+rather than merely enabling the sensor.
+
+Still **unverified**: BPM has not been compared against a reference monitor — 81 resting
+is plausible and the series behaves correctly, but plausible is not measured. The
+confidence and status fields are named from behaviour, not from documentation, and the
+constant trailing 4 bytes are unexplained.
+
+`HRM_STATE` (`0x30`) was already `1` on this device throughout, and was never written.
+Whether it must be `1` for this to work is **untested**.
+
+### The workout gate is host policy, not accessory firmware — confirmed
 
 Apple only collects heart rate on AirPods Pro 3 **while a workout is running, or while
 the Health app is open**. There is no setting for continuous monitoring; owners report
@@ -126,9 +202,15 @@ on the wire, and looking for one is probably the wrong search — the HID contra
 descriptor above (write the report interval, receive input reports) is the mechanism
 that a host-side subscription would ultimately drive.
 
-**Unverified.** AirPulse is closed-source and iOS-only; nothing above has been confirmed
-against its traffic. What can be tested from Android is direct: write the report-interval
-feature report, and see whether input reports follow.
+That prediction was tested the same day and held. Writing the report-interval feature
+report produces heart-rate reports immediately, with no workout running and no Apple
+device involved — see the decode above. **There is no "start workout" command, and
+looking for one would have been the wrong search.** The accessory streams to any host
+that asks in the ordinary HID way; iOS simply chooses to ask only during a workout or
+while the Health app is open.
+
+AirPulse itself remains closed-source and unexamined; it is cited here only as the
+observation that prompted the right question.
 
 Two consequences, and they change what "implement heart rate" even means:
 

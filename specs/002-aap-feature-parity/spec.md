@@ -329,9 +329,12 @@ Each for a different reason, and the reason matters more than the exclusion:
   over a second channel that the accessory only opens to a host presenting Apple's vendor
   identity. Achieving that on Android requires modifying the Bluetooth stack, which means
   Xposed and therefore root — outside this project's baseline.
-- **Heart rate on AirPods Pro 3.** The accessory publishes a description of its own
-  heart-rate report format, so this is no longer unknown, but no measurement has been
-  observed yet. Tracked separately; nothing is shipped until a real reading is decoded.
+- **Heart rate on AirPods Pro 3.** Decoded and streaming as of 2026-08-04, after this
+  specification was first written — live readings at a requested interval, with no
+  workout and no root. It stays out of this specification because it is a feature in its
+  own right with its own questions (readings must be gated on a confidence value, and
+  continuous sensing has a battery cost the user should choose), not because it is
+  unreachable. It should be specified next.
 - **Find My, automatic device switching, Siri invocation, audio sharing.** These need
   Apple account services, not protocol access, and no third-party client can join them.
 - **Providing head tracking to Android for spatial audio.** Not explored; likely needs

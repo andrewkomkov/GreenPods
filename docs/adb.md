@@ -92,6 +92,20 @@ update coming back through the decoder. A write that is accepted and never echoe
 the characteristic failure of this transport — it is what both a raced write and a
 transport built without a `BluetoothAdapter` look like.
 
+### Sending a frame the app does not know how to build
+
+```bash
+gp --es cmd raw --es hex "040004001700000010000F000878420B081310021A050140420F00"
+```
+
+Hex with **no spaces** — `am` splits its arguments on whitespace, so a spaced string
+arrives as its first byte alone.
+
+That particular frame starts the heart-rate sensor at 1 Hz; the same frame with the
+interval set to zero stops it. This is how undecoded protocol behaviour gets
+characterised, and it goes over the ordinary session on purpose — an experiment on a
+private channel would prove nothing about the real one.
+
 To see the raw frames behind any of this:
 
 ```bash

@@ -31,7 +31,7 @@ all of them. GreenPods is built around that reality rather than pretending other
 | Conversational Awareness, adaptive audio | AAP over L2CAP | ✅ Recent Android |
 | Stem gestures, rename, ear-detection toggle | AAP over L2CAP | ✅ Recent Android |
 | Head tracking + head gestures | AAP over L2CAP | ✅ Recent Android |
-| Heart rate — **AirPods Pro 3** | AAP, frame format not yet decoded | ❌ Not yet |
+| Heart rate — **AirPods Pro 3** | AAP HID sensor report | 🔬 Decoded, not yet shipped |
 | Find My, device switching, Siri, audio sharing | Apple account services | ❌ Never |
 
 **Why "recent Android":** the Apple Accessory Protocol runs over an L2CAP channel on

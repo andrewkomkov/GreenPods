@@ -143,11 +143,16 @@ Do not merge these — they share nothing but the name:
 
 - **Powerbeats Pro 2** broadcasts the standard Bluetooth SIG Heart Rate Profile
   (`0x180D`). Plain GATT, works unrooted. Implemented in `HeartRateGattSource`.
-- **AirPods Pro 3** does not. Its HR is AAP-only, and the frame layout has never been
-  published. It does not have to be guessed at, though: the accessory sends a HID
-  report descriptor for its own heart-rate service over opcode `0x17`, naming
-  `HeartRateService` and usage `0x04B8` (Heart Rate) as an 8-bit input field. Decode
-  the descriptor rather than inventing a layout — see `docs/protocol-research.md`.
+- **AirPods Pro 3** does not. Its HR arrives over AAP as a HID sensor report, and the
+  format is decoded — see `docs/protocol-research.md`. Opcode `0x17` is a HID transport
+  carrying several services, not just head tracking; writing a report-interval feature
+  report for the heart-rate service starts the stream, and interval 0 stops it. No
+  workout and no root required.
+
+  Two things about it are not optional. **Service ids differ per model** — read them from
+  the descriptors the accessory sends, never hard-code them. And **gate on the confidence
+  byte**: the optical sensor's first few readings are wrong, and ungated it opens by
+  reporting 169 BPM to someone sitting still.
 
 ### Material 3 Expressive
 

@@ -34,6 +34,17 @@ class AapSession(
      */
     suspend fun awaitReady(): Boolean = transport.awaitReady()
 
+    /**
+     * Writes a packet built elsewhere.
+     *
+     * The wire format is reverse-engineered and incomplete, so establishing what a new
+     * frame does means sending it and watching what comes back. This is the only way to
+     * do that, and it is why it exists in production code rather than in the debug build:
+     * the session that carries an experiment has to be the same session that carries
+     * everything else, or the experiment proves nothing about the real path.
+     */
+    suspend fun send(packet: ByteArray): Boolean = transport.send(packet)
+
     suspend fun setNoiseControlMode(mode: NoiseControlMode): Boolean = transport.send(AapCommands.listeningMode(mode))
 
     suspend fun setAdaptiveNoiseStrength(percent: Int): Boolean =
