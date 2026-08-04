@@ -28,6 +28,17 @@ sealed interface HeartRateState {
     val trustedReading: HeartRateReading?
         get() = (this as? Measuring)?.reading
 
+    /**
+     * Whether the accessory's sensor is being asked to run right now.
+     *
+     * Deliberately broader than [Measuring]: settling and uncertain both cost the
+     * accessory's battery, so FR-013's "active sensing is discoverable" has to cover
+     * them. A notification that only appeared once a number was trustworthy would hide
+     * exactly the period a user most wants to know about.
+     */
+    val isSensing: Boolean
+        get() = this is Starting || this is Settling || this is Measuring || this is Uncertain
+
     /** This model has no heart-rate sensor of either kind (FR-027). */
     data class Unsupported(
         val reason: String,

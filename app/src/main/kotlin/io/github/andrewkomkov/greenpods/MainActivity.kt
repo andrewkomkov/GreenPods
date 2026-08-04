@@ -73,12 +73,20 @@ class MainActivity : ComponentActivity() {
      *
      * Driven from the settings flow rather than from the switch's click handler, so the
      * service state stays correct no matter where the setting was changed.
+     *
+     * **Heart rate implies the service.** The sensing session lives with the Bluetooth
+     * channel, and continuous Bluetooth work needs a foreground service — so enabling
+     * heart rate starts one even though `backgroundMonitoringEnabled` defaults to off.
+     * That default exists because a service the user did not ask for is hostile, and this
+     * is not that: the heart-rate toggle states the cost before it can be switched on, so
+     * the override is one the user consented to rather than one that happened to them
+     * (FR-012, FR-013, AD-8).
      */
     private fun observeBackgroundMonitoring() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 app.settingsRepository.settings
-                    .map { it.backgroundMonitoringEnabled }
+                    .map { it.backgroundMonitoringEnabled || it.heartRateEnabled }
                     .distinctUntilChanged()
                     .collect { enabled ->
                         val intent = Intent(this@MainActivity, PodMonitorService::class.java)

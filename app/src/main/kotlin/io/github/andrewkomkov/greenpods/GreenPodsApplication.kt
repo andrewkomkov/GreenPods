@@ -8,6 +8,10 @@ import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.ear.AndroidPlaybackActuator
 import io.github.andrewkomkov.greenpods.core.data.ear.EarDetectionController
 import io.github.andrewkomkov.greenpods.core.data.environment.AndroidEnvironmentMonitor
+import io.github.andrewkomkov.greenpods.core.data.health.AndroidHealthStoreClient
+import io.github.andrewkomkov.greenpods.core.data.health.HealthConnectLink
+import io.github.andrewkomkov.greenpods.core.data.heartrate.AndroidGattHeartRateSource
+import io.github.andrewkomkov.greenpods.core.data.heartrate.HeartRateController
 import io.github.andrewkomkov.greenpods.core.data.settings.SettingsRepository
 import io.github.andrewkomkov.greenpods.core.data.transport.AndroidAapProbe
 import io.github.andrewkomkov.greenpods.core.data.transport.TransportGate
@@ -56,6 +60,40 @@ class GreenPodsApplication : Application() {
             repository = podRepository,
             diagnostics = diagnostics,
             scope = applicationScope,
+        )
+    }
+
+    /**
+     * The health store, or a link that reports it absent.
+     *
+     * Constructed unconditionally: availability is a question the link answers, not a
+     * reason not to build it. A phone without Health Connect still shows a heart rate,
+     * and the settings screen still has a section explaining why the integration is
+     * unavailable (FR-020).
+     */
+    val healthConnectLink: HealthConnectLink by lazy {
+        HealthConnectLink(
+            client = AndroidHealthStoreClient(this),
+            settings = settingsRepository.settings,
+        )
+    }
+
+    /**
+     * The heart-rate session.
+     *
+     * It is given the repository's event stream rather than a transport of its own: the
+     * `0x17` channel is shared, and a second session would not be the session everything
+     * else uses.
+     */
+    val heartRateController: HeartRateController by lazy {
+        HeartRateController(
+            pods = podRepository.pods,
+            aapEvents = podRepository.aapEvents,
+            settings = settingsRepository.settings,
+            commands = controlGateway,
+            gatt = AndroidGattHeartRateSource(this),
+            sink = healthConnectLink,
+            publish = podRepository::onHeartRateState,
         )
     }
 

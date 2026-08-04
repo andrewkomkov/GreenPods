@@ -25,6 +25,15 @@
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="30" />
 
+    <!--
+      Health Connect. WRITE is the feature; READ exists for exactly one purpose -
+      FR-029's count-back, which is only meaningful if it can be filtered to GreenPods'
+      own records. Counting everything in a window would report someone else's chest
+      strap as our output. Reading other apps' heart rate is out of scope.
+    -->
+    <uses-permission android:name="android.permission.health.WRITE_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
@@ -34,6 +43,15 @@
     <uses-feature
         android:name="android.hardware.bluetooth_le"
         android:required="true" />
+
+    <!--
+      Without this, package visibility hides the Health Connect provider and its
+      availability cannot be determined at all - which would make FR-020's three states
+      collapse into one wrong one.
+    -->
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+    </queries>
 
     <application
         android:name=".GreenPodsApplication"
@@ -53,6 +71,34 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          FR-022. Users grant and revoke health permissions from the system's health
+          settings, not from inside GreenPods, so the explanation has to be reachable
+          from there. An app that cannot explain itself where the decision is made is
+          one people should decline.
+        -->
+        <activity
+            android:name=".health.HealthRationaleActivity"
+            android:exported="true"
+            android:label="@string/health_rationale_title"
+            android:theme="@style/Theme.GreenPods">
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+
+        <!-- The Android 14+ route to the same screen, from the permission-usage page. -->
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE"
+            android:targetActivity=".health.HealthRationaleActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
 
         <service
             android:name=".service.PodMonitorService"

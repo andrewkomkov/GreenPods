@@ -429,7 +429,25 @@ class AapTransport(
         packet: ByteArray,
     ) {
         if (!Log.isLoggable(TAG, Log.DEBUG)) return
+
+        // Heart-rate reports are the one thing that never reaches this log, at any level.
+        // FR-023 says no heart rate appears in any diagnostic path, and this log is the
+        // most diagnostic path there is — people paste it into bug reports. Its shape is
+        // still recorded, so a report arriving is still visible; only the body is not.
+        if (isHidInputReport(packet)) {
+            Log.d(TAG, "$direction ${packet.size} bytes, HID input report (body withheld)")
+            return
+        }
         Log.d(TAG, "$direction ${packet.joinToString(" ") { "%02X".format(it) }}")
+    }
+
+    /** True for a `0x17` frame carrying protobuf field 7 — a sensor report. */
+    private fun isHidInputReport(packet: ByteArray): Boolean {
+        if (packet.size <= HID_BODY_OFFSET) return false
+        if (!packet.copyOfRange(0, 4).contentEquals(AapProtocol.HEADER)) return false
+        val opcode = (packet[4].toInt() and 0xFF) or ((packet[5].toInt() and 0xFF) shl 8)
+        if (opcode != Opcode.HEAD_TRACKING.value) return false
+        return HidDescriptorParser.hasInputReport(packet.copyOfRange(HID_BODY_OFFSET, packet.size))
     }
 
     private companion object {
@@ -451,6 +469,9 @@ class AapTransport(
 
         /** `BluetoothSocket.TYPE_L2CAP`, which is not public API. */
         const val L2CAP_TYPE = 3
+
+        /** Header, opcode and the `00 00 10 00 <length>` prefix a `0x17` frame carries. */
+        const val HID_BODY_OFFSET = 12
 
         /**
          * Apple's AAP service UUID, as advertised in the accessory's SDP record.

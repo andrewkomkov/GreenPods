@@ -42,6 +42,12 @@ class PodMonitorService : LifecycleService() {
 
         lifecycleScope.launch { app.earDetectionController.run() }
 
+        // Sensing lives with the channel. The heart-rate session runs here rather than in
+        // the Activity because it must survive the screen going off — and because Android
+        // requires a foreground service for continuous Bluetooth work anyway, so one
+        // notification satisfies FR-013 and the platform at once (AD-8, R-8).
+        lifecycleScope.launch { app.heartRateController.run() }
+
         lifecycleScope.launch {
             combine(app.podRepository.pods, app.settingsRepository.settings) { pods, settings ->
                 pods to settings
@@ -49,9 +55,24 @@ class PodMonitorService : LifecycleService() {
                 val nearest = pods.firstOrNull()
                 updateOngoingNotification(
                     when {
-                        nearest == null -> "No AirPods nearby"
-                        nearest.battery.lowestBudPercent == null -> nearest.name
-                        else -> "${nearest.name} · ${nearest.battery.lowestBudPercent}%"
+                        nearest == null -> {
+                            "No AirPods nearby"
+                        }
+
+                        // FR-013: active sensing is discoverable without opening the app.
+                        // It comes first because it is the thing the user most needs to
+                        // know is running — it draws the accessory's battery.
+                        nearest.heartRateSensing.enabled && nearest.heartRate.isSensing -> {
+                            getString(R.string.monitor_notification_heart_rate, nearest.name)
+                        }
+
+                        nearest.battery.lowestBudPercent == null -> {
+                            nearest.name
+                        }
+
+                        else -> {
+                            "${nearest.name} · ${nearest.battery.lowestBudPercent}%"
+                        }
                     },
                 )
                 pods.forEach { pod ->

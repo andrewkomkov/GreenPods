@@ -1,5 +1,6 @@
 package io.github.andrewkomkov.greenpods.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Headphones
@@ -14,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -24,6 +26,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import io.github.andrewkomkov.greenpods.GreenPodsApplication
 import io.github.andrewkomkov.greenpods.feature.controls.ControlsScreen
 import io.github.andrewkomkov.greenpods.feature.controls.ControlsViewModel
 import io.github.andrewkomkov.greenpods.feature.pods.PodsScreen
@@ -134,6 +137,16 @@ fun GreenPodsApp(
             composable(GreenPodsDestination.SETTINGS.route) {
                 val viewModel: SettingsViewModel = viewModel(factory = GreenPodsViewModels.settings())
                 val state by viewModel.state.collectAsStateWithLifecycle()
+
+                // The health permission request comes back from `core/data` as an
+                // ActivityResultContract typed on plain strings, so nothing here — and
+                // nothing in feature/settings — links Health Connect (AD-11).
+                val healthPermissionContract = remember { GreenPodsApplication.instance.healthConnectLink }
+                val launcher =
+                    healthPermissionContract.permissionRequestContract()?.let { contract ->
+                        rememberLauncherForActivityResult(contract, viewModel::onHealthPermissionResult)
+                    }
+
                 SettingsScreen(
                     state = state,
                     onAutoPauseChanged = viewModel::setAutoPause,
@@ -149,6 +162,11 @@ fun GreenPodsApp(
                     onClearDiagnostics = viewModel::clearDiagnostics,
                     onCheckForUpdates = viewModel::checkForUpdates,
                     onOpenUpdate = onOpenUrl,
+                    onHeartRateChanged = viewModel::setHeartRateEnabled,
+                    onHeartRateHealthConnectChanged = viewModel::setHeartRateHealthConnect,
+                    onHeartRateIntervalChanged = viewModel::setHeartRateInterval,
+                    onRequestHealthPermission = { launcher?.launch(viewModel.healthPermissions()) },
+                    onDeleteHealthRecords = viewModel::deleteHealthRecords,
                 )
             }
         }

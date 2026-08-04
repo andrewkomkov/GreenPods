@@ -15,10 +15,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -71,6 +74,11 @@ fun SettingsScreen(
     onClearDiagnostics: () -> Unit = {},
     onCheckForUpdates: () -> Unit = {},
     onOpenUpdate: (String) -> Unit = {},
+    onHeartRateChanged: (Boolean) -> Unit = {},
+    onHeartRateHealthConnectChanged: (Boolean) -> Unit = {},
+    onHeartRateIntervalChanged: (Int) -> Unit = {},
+    onRequestHealthPermission: () -> Unit = {},
+    onDeleteHealthRecords: () -> Unit = {},
 ) {
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -88,6 +96,20 @@ fun SettingsScreen(
             onBackgroundMonitoringChanged = onBackgroundMonitoringChanged,
             onLowBatteryWarningChanged = onLowBatteryWarningChanged,
             onLowBatteryThresholdChanged = onLowBatteryThresholdChanged,
+        )
+
+        HeartRateSection(
+            settings = state.settings,
+            onHeartRateChanged = onHeartRateChanged,
+            onHeartRateIntervalChanged = onHeartRateIntervalChanged,
+        )
+
+        HealthConnectSection(
+            settings = state.settings,
+            health = state.health,
+            onHealthConnectChanged = onHeartRateHealthConnectChanged,
+            onRequestPermission = onRequestHealthPermission,
+            onDeleteRecords = onDeleteHealthRecords,
         )
 
         ScanSection(settings = state.settings, onScanModeChanged = onScanModeChanged)
@@ -184,6 +206,145 @@ private fun MonitoringSection(
             valueRange = GreenPodsSettings.MIN_THRESHOLD.toFloat()..GreenPodsSettings.MAX_THRESHOLD.toFloat(),
             enabled = settings.lowBatteryWarningEnabled,
         )
+    }
+}
+
+/**
+ * The heart-rate switch, and the cost stated **before** it can be moved.
+ *
+ * FR-012 says the user is told that continuous sensing draws the accessory's battery
+ * before they enable it, and the ordering here is the requirement: the sentence is the
+ * section's subtitle, above the switch, not a caption underneath it. A cost discovered
+ * after the fact is not a cost that was disclosed.
+ *
+ * The same subtitle carries the other consequence — enabling this starts the monitoring
+ * service. That default is off because a service the user did not ask for is hostile, so
+ * overriding it silently would be worse than not shipping the feature (AD-8).
+ */
+@Composable
+private fun HeartRateSection(
+    settings: GreenPodsSettings,
+    onHeartRateChanged: (Boolean) -> Unit,
+    onHeartRateIntervalChanged: (Int) -> Unit,
+) {
+    SectionCard(
+        title = "Heart rate",
+        subtitle =
+            "Reads the earbuds' optical sensor over Apple's protocol — no workout needed. " +
+                "It runs continuously while you wear them, which uses the earbuds' battery, " +
+                "and keeps GreenPods monitoring in the background while it is on.",
+        icon = Icons.Filled.MonitorHeart,
+    ) {
+        SwitchRow(
+            title = "Measure heart rate",
+            description = "Off until you ask for it.",
+            checked = settings.heartRateEnabled,
+            onCheckedChange = onHeartRateChanged,
+        )
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Filled.Timer, contentDescription = null)
+            Text("A reading every ${settings.heartRateIntervalMillis / 1000f} s")
+        }
+        Slider(
+            value = settings.heartRateIntervalMillis.toFloat(),
+            onValueChange = { onHeartRateIntervalChanged(it.toInt()) },
+            // A slower cadence costs the earbuds less. The range exists so that trade-off
+            // can be measured rather than assumed (SC-006).
+            valueRange = 1_000f..10_000f,
+            steps = 8,
+            enabled = settings.heartRateEnabled,
+        )
+
+        Text(
+            "GreenPods shows a reading only once the earbuds report they are confident in " +
+                "it. It does not interpret the number.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * The health store, its three availability states, and delete-my-data.
+ *
+ * Separately switchable from the reading itself (FR-017), because seeing a number and
+ * putting it into someone's health history are two decisions. The section is present
+ * even where Health Connect is not, carrying the reason — an absent section reads as a
+ * bug (Principle II, FR-020).
+ *
+ * **This module links no Health Connect type.** The permission request arrives as an
+ * `ActivityResultContract<Set<String>, Set<String>>`, whose parameters are plain strings,
+ * and is launched by the host Activity (AD-11).
+ */
+@Composable
+private fun HealthConnectSection(
+    settings: GreenPodsSettings,
+    health: HealthUiState,
+    onHealthConnectChanged: (Boolean) -> Unit,
+    onRequestPermission: () -> Unit,
+    onDeleteRecords: () -> Unit,
+) {
+    SectionCard(
+        title = "Health Connect",
+        subtitle = health.availabilitySentence.ifBlank { "Checking Health Connect…" },
+        icon = Icons.Filled.Favorite,
+    ) {
+        SwitchRow(
+            title = "Write readings to Health Connect",
+            description = "So your other apps can read heart rate from your earbuds.",
+            checked = settings.heartRateHealthConnectEnabled,
+            onCheckedChange = onHealthConnectChanged,
+            enabled = health.isAvailable,
+        )
+
+        when {
+            !health.isAvailable -> {
+                Unit
+            }
+
+            health.hasWritePermission -> {
+                Text(
+                    "Permission granted. Only readings the earbuds are confident in are written.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            // Asked once, refused, and not asked again — the requirement is that the app
+            // does not nag, so it explains where the switch lives instead (FR-018).
+            health.permissionRefused -> {
+                Text(
+                    "Permission was declined. You can grant it later in Health Connect's own " +
+                        "settings; GreenPods will not ask again.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            else -> {
+                Button(onClick = onRequestPermission) { Text("Allow writing heart rate") }
+            }
+        }
+
+        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+
+        Text(
+            "Delete what GreenPods holds",
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Text(
+            "Removes the heart-rate records GreenPods wrote. Anything already in Health " +
+                "Connect is managed there, including data from other apps.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = onDeleteRecords, enabled = health.isAvailable) {
+            Text("Delete GreenPods' records")
+        }
+        if (health.deletionMessage.isNotBlank()) {
+            Text(health.deletionMessage, style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 

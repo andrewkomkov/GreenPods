@@ -48,6 +48,7 @@ object GreenPodsViewModels {
                     diagnosticsLog = app.diagnostics,
                     updateChecker = app.updateChecker,
                     appVersion = app.versionName,
+                    health = app.healthConnectLink,
                 )
             }
         }

@@ -26,8 +26,20 @@ data class PodsUiState(
     val pods: List<PodState> = emptyList(),
     val emptyReason: PodsEmptyReason = PodsEmptyReason.SEARCHING,
     val scanFailure: String? = null,
+    /**
+     * The heart-rate card's presentation, per accessory address.
+     *
+     * Decided here rather than in the composable so it can be asserted in a JVM test.
+     * The two things worth asserting — that settling shows no number, and that uncertain
+     * *withdraws* the last one rather than keeping it on screen — are exactly the ones
+     * that are painful to check through Compose and trivial to check here.
+     */
+    val heartRates: Map<String, HeartRateUi> = emptyMap(),
 ) {
     val isEmpty: Boolean get() = pods.isEmpty()
+
+    fun heartRateOf(pod: PodState): HeartRateUi =
+        heartRates[pod.address] ?: HeartRateUi.of(pod.heartRate, pod.heartRateSensing)
 }
 
 /**
@@ -56,6 +68,10 @@ class PodsViewModel(
                         else -> PodsEmptyReason.SEARCHING
                     },
                 scanFailure = failure,
+                heartRates =
+                    pods.associate { pod ->
+                        pod.address to HeartRateUi.of(pod.heartRate, pod.heartRateSensing)
+                    },
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIPTION_TIMEOUT_MS), PodsUiState())
 
