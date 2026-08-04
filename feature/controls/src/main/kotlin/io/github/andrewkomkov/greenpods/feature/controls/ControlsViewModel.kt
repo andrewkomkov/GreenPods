@@ -36,6 +36,29 @@ data class ControlsUiState(
     companion object {
         const val DEFAULT_ADAPTIVE_STRENGTH = 50
         val DEFAULT_CYCLE = setOf(NoiseControlMode.NOISE_CANCELLATION, NoiseControlMode.TRANSPARENCY)
+
+        /**
+         * The half of the app a locked channel does not touch.
+         *
+         * Said every time the lock is, because the alternative reading — "none of this
+         * works on my phone" — is both wrong and the one people reach for. Battery and
+         * ear detection ride the advertisement, which no permission and no stack can
+         * refuse.
+         */
+        const val UNAFFECTED = "Battery, ear detection and auto-pause are unaffected."
+
+        /**
+         * The one thing that actually recovers these settings today.
+         *
+         * The accessory stores them itself, so a single pass on any Apple device is
+         * permanent and GreenPods will read the result straight back. Saying so is more
+         * use than a "check again" button that will keep returning the same answer.
+         */
+        const val WORKAROUND_TITLE = "A way around it"
+
+        const val WORKAROUND_BODY =
+            "Set these once on an iPhone, iPad or Mac — the earbuds keep them. GreenPods " +
+                "will read the settings back here."
     }
 }
 
@@ -78,8 +101,18 @@ class ControlsViewModel(
                             "Not checked yet. Tap to see whether this phone can carry settings commands."
                         }
 
+                        aap?.isAvailable == true -> {
+                            "This phone can send commands to your ${pod.name}."
+                        }
+
+                        // Not `aap.reason`. That sentence is the Bluetooth layer's own
+                        // account of what it was refused — a rejected PSM, a blocked
+                        // reflective call — and it belongs in the diagnostics log, where
+                        // someone can act on it. What is needed here is the part the
+                        // reader can act on, plus the part that stops them concluding
+                        // they bought faulty earbuds.
                         else -> {
-                            aap?.reason.orEmpty()
+                            "${Transport.AAP_L2CAP.lockSentence} ${ControlsUiState.UNAFFECTED}"
                         }
                     },
                 probing = isProbing,
