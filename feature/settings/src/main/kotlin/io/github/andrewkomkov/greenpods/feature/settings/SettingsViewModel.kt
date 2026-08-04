@@ -278,7 +278,7 @@ class SettingsViewModel(
             gatedFeatures
                 .groupBy { feature -> lockSentenceFor(feature) }
                 .map { (sentence, features) ->
-                    LockedCapabilities(features.map { it.displayName }.sorted(), sentence)
+                    LockedCapabilities(features.map { it.displayName }.distinct().sorted(), sentence)
                 }.sortedBy { it.sentence }
 
         return CapabilitiesUiState(
@@ -287,6 +287,9 @@ class SettingsViewModel(
                 usableFeatures
                     .filter { it != PodFeature.EAR_DETECTION }
                     .map { it.displayName }
+                    // Both heart-rate routes are called "Heart rate" now, and a model
+                    // that offers both must not be told it has two of them.
+                    .distinct()
                     .sorted(),
             locked = locked,
             known = true,

@@ -158,16 +158,31 @@ enum class PodFeature {
         get() =
             when (this) {
                 EAR_DETECTION -> "Ear detection"
+
                 NOISE_CONTROL -> "Noise control"
+
                 ADAPTIVE_AUDIO -> "Adaptive audio"
+
                 CONVERSATIONAL_AWARENESS -> "Conversational awareness"
+
                 SPATIAL_AUDIO -> "Spatial audio"
+
                 HEAD_TRACKING -> "Head tracking"
+
                 EAR_TIP_FIT_TEST -> "Ear tip fit test"
+
                 CASE_SPEAKER -> "Case speaker"
+
                 VOLUME_SWIPE -> "Volume swipe"
+
                 HEARING_AID -> "Hearing aid"
-                HEART_RATE_AAP -> "Heart rate (Apple protocol)"
+
+                // Both routes are called what they are. Which one carried a given
+                // reading is a difference the *card* states, in terms of whether the
+                // earbuds grade their own readings — never by putting a protocol's name
+                // on screen, which is the one thing the product UI may not do.
+                HEART_RATE_AAP -> "Heart rate"
+
                 HEART_RATE_GATT -> "Heart rate"
             }
 

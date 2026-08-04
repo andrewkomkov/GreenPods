@@ -2,7 +2,9 @@ package io.github.andrewkomkov.greenpods.core.designsystem.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.MaterialExpressiveTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -51,10 +53,18 @@ private val DarkScheme =
 /**
  * Material 3 Expressive theme.
  *
- * Expressive motion comes from [GreenPodsMotion] rather than from the theme,
- * because material3 1.4.0 still keeps `MotionScheme` internal. Components take
- * their spring specs from there directly.
+ * [MaterialExpressiveTheme] rather than [androidx.compose.material3.MaterialTheme]: it
+ * installs the expressive shape and type scales and — the part that shows in motion —
+ * an expressive [MotionScheme], whose springs are deliberately under-damped so things
+ * arrive and settle instead of stopping dead.
+ *
+ * This needs material3 1.5.0-alpha. The whole Expressive API surface is internal or
+ * absent in 1.4.0 stable, which the BOM pins, so `libs.versions.toml` overrides it for
+ * this one module. That is a real trade-off — an alpha in a shipping app — taken because
+ * the alternative was reimplementing five components by hand and calling the result
+ * Expressive.
  */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun GreenPodsTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
@@ -78,9 +88,9 @@ fun GreenPodsTheme(
             }
         }
 
-    MaterialTheme(
+    MaterialExpressiveTheme(
         colorScheme = colorScheme,
-        typography = MaterialTheme.typography,
+        motionScheme = MotionScheme.expressive(),
         content = content,
     )
 }

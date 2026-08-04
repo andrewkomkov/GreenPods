@@ -3,8 +3,6 @@ package io.github.andrewkomkov.greenpods.feature.settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,7 +26,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.andrewkomkov.greenpods.core.designsystem.component.LockedSurface
 import io.github.andrewkomkov.greenpods.core.designsystem.component.SectionCard
+import io.github.andrewkomkov.greenpods.core.designsystem.component.SegmentedChoice
 import io.github.andrewkomkov.greenpods.core.designsystem.component.SwitchRow
 import io.github.andrewkomkov.greenpods.core.model.GestureAction
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
@@ -354,7 +352,6 @@ private fun HealthConnectSection(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ScanSection(
     settings: GreenPodsSettings,
@@ -365,15 +362,12 @@ private fun ScanSection(
         subtitle = "How often GreenPods checks. Faster costs phone battery.",
         icon = Icons.Filled.Radar,
     ) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ScanMode.entries.forEach { mode ->
-                FilterChip(
-                    selected = settings.scanMode == mode,
-                    onClick = { onScanModeChanged(mode) },
-                    label = { Text(mode.label()) },
-                )
-            }
-        }
+        SegmentedChoice(
+            options = ScanMode.entries,
+            selected = { it == settings.scanMode },
+            label = ScanMode::label,
+            onSelect = onScanModeChanged,
+        )
     }
 }
 
@@ -604,7 +598,7 @@ private fun UpdateSection(
     }
 }
 
-private fun ScanMode.label(): String =
+internal fun ScanMode.label(): String =
     when (this) {
         ScanMode.LOW_POWER -> "Battery saver"
         ScanMode.BALANCED -> "Balanced"

@@ -2,8 +2,6 @@ package io.github.andrewkomkov.greenpods.feature.controls
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,7 +16,6 @@ import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.NoiseAware
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -32,6 +29,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.dp
 import io.github.andrewkomkov.greenpods.core.designsystem.component.LockedCard
 import io.github.andrewkomkov.greenpods.core.designsystem.component.SectionCard
+import io.github.andrewkomkov.greenpods.core.designsystem.component.SegmentedChoice
 import io.github.andrewkomkov.greenpods.core.designsystem.component.SwitchRow
 import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 
@@ -43,7 +41,6 @@ import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
  * controls stay visible and the reason is stated inline: a missing button reads as a
  * bug, a locked one explains the platform.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ControlsScreen(
     state: ControlsUiState,
@@ -79,16 +76,13 @@ fun ControlsScreen(
                 icon = Icons.Filled.NoiseAware,
                 modifier = reachable,
             ) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    NoiseControlMode.entries.forEach { candidate ->
-                        FilterChip(
-                            selected = state.mode == candidate,
-                            onClick = { onModeSelected(candidate) },
-                            enabled = enabled,
-                            label = { Text(candidate.label()) },
-                        )
-                    }
-                }
+                SegmentedChoice(
+                    options = NoiseControlMode.entries,
+                    selected = { it == state.mode },
+                    label = NoiseControlMode::label,
+                    onSelect = onModeSelected,
+                    enabled = enabled,
+                )
             }
         }
 
@@ -140,16 +134,15 @@ fun ControlsScreen(
                 icon = Icons.Filled.Hearing,
                 modifier = reachable,
             ) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    NoiseControlMode.entries.forEach { candidate ->
-                        FilterChip(
-                            selected = candidate in state.longPressCycle,
-                            onClick = { onCycleModeToggled(candidate) },
-                            enabled = enabled,
-                            label = { Text(candidate.label()) },
-                        )
-                    }
-                }
+                // Several may be on at once — a long press cycles through whatever is
+                // checked — so this is the same connected group used as a multi-select.
+                SegmentedChoice(
+                    options = NoiseControlMode.entries,
+                    selected = { it in state.longPressCycle },
+                    label = NoiseControlMode::label,
+                    onSelect = onCycleModeToggled,
+                    enabled = enabled,
+                )
             }
         }
 
@@ -230,7 +223,7 @@ private fun GateCard(
     }
 }
 
-private fun NoiseControlMode.label(): String =
+internal fun NoiseControlMode.label(): String =
     when (this) {
         NoiseControlMode.OFF -> "Off"
         NoiseControlMode.NOISE_CANCELLATION -> "ANC"
@@ -238,5 +231,13 @@ private fun NoiseControlMode.label(): String =
         NoiseControlMode.ADAPTIVE -> "Adaptive"
     }
 
-/** Visible, readable, and plainly not something this phone will accept a press on. */
-private const val UNREACHABLE_ALPHA = 0.55f
+/**
+ * Visible, readable, and plainly not something this phone will accept a press on.
+ *
+ * Deliberately gentle. Every control inside is *also* drawn in its own disabled colours,
+ * and the two multiply: at the 0.55 the mock suggested, the section titles came out grey
+ * on grey and the segment labels were barely legible. Locked has to stay readable — the
+ * whole argument for showing these controls instead of hiding them is that a user can see
+ * what their phone is missing.
+ */
+private const val UNREACHABLE_ALPHA = 0.8f

@@ -20,7 +20,8 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ContainedLoadingIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import io.github.andrewkomkov.greenpods.core.designsystem.component.BatteryRing
 import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilityRow
 import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilityUi
+import io.github.andrewkomkov.greenpods.core.model.PodFeature
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.WearState
 
@@ -132,9 +134,9 @@ private fun PodCard(
                 onTurnOn = onTurnOnHeartRate,
             )
 
-            // Gated features are listed alongside usable ones so the absence of a
+            // Gated features are shown alongside usable ones so the absence of a
             // control reads as a platform limit rather than a missing feature.
-            CapabilityRow(capabilities = pod.capabilities())
+            CapabilityRow(capabilities = pod.headlineCapabilities())
 
             Button(onClick = onCheckControl, modifier = Modifier.fillMaxWidth()) {
                 Text("What this phone can control")
@@ -239,23 +241,55 @@ private fun Int?.proximity(): String =
         else -> "Somewhere close"
     }
 
-/** Usable capabilities first, then locked ones, each carrying its own explanation. */
-private fun PodState.capabilities(): List<CapabilityUi> =
-    (
-        usableFeatures.map { feature ->
-            CapabilityUi(feature.displayName, available = true, reason = feature.explanation)
-        } +
-            gatedFeatures.map { feature ->
+/**
+ * The five things people came to check, and whether this phone can do them.
+ *
+ * Not every feature the hardware has. AirPods Pro 3 carry ten, and listing all ten turned
+ * the card into a column of identical rows with the battery and the heart rate drowning
+ * somewhere inside it — the exact shape of a debug dump, and unreadable at a glance for
+ * the one question it is supposed to answer.
+ *
+ * This is a summary, not a truncation: the complete list, with a reason against every
+ * locked entry, is on the Settings screen under "What works with this phone". What is
+ * kept here is what the app is opened for, in the order it is thought about.
+ */
+private fun PodState.headlineCapabilities(): List<CapabilityUi> =
+    buildList {
+        // Battery is not a PodFeature — it rides the advertisement, so it is the one
+        // thing no phone and no permission can take away. First, because it is why the
+        // app gets opened.
+        add(
+            CapabilityUi(
+                label = "Battery",
+                available = true,
+                reason = "Every phone can hear what AirPods broadcast, so this always works.",
+            ),
+        )
+
+        listOfNotNull(
+            PodFeature.EAR_DETECTION.takeIf { it in model.features },
+            heartRateFeature,
+            PodFeature.NOISE_CONTROL.takeIf { it in model.features },
+            PodFeature.HEAD_TRACKING.takeIf { it in model.features },
+        ).forEach { feature ->
+            val usable = feature in usableFeatures
+            add(
                 CapabilityUi(
                     label = feature.displayName,
-                    available = false,
-                    // The phone's limit, not the stack's account of it: the precise
-                    // refusal is kept for the diagnostics log, where someone can act on
-                    // it (see PodState.lockSentenceFor).
-                    reason = "${feature.explanation}\n\n${lockSentenceFor(feature)}",
-                )
-            }
-    ).sortedWith(compareByDescending<CapabilityUi> { it.available }.thenBy { it.label })
+                    available = usable,
+                    reason =
+                        if (usable) {
+                            feature.explanation
+                        } else {
+                            // The phone's limit, not the stack's account of it: the
+                            // precise refusal is kept for the diagnostics log, where
+                            // someone can act on it (see PodState.lockSentenceFor).
+                            "${feature.explanation}\n\n${lockSentenceFor(feature)}"
+                        },
+                ),
+            )
+        }
+    }
 
 private fun WearState.caption(): String =
     when (this) {
@@ -350,10 +384,14 @@ private fun EmptyState(
 }
 
 /** A spinner while it is working, and a badge — coloured by severity — when it is not. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun EmptyMark(reason: PodsEmptyReason) {
     if (reason == PodsEmptyReason.SEARCHING) {
-        CircularProgressIndicator(Modifier.size(44.dp), strokeWidth = 4.dp)
+        // Contained, and morphing through shapes rather than spinning: this is the one
+        // empty state that is not a problem to fix, and the Expressive loader reads as
+        // "working" where a spinner in the middle of a blank screen reads as "stuck".
+        ContainedLoadingIndicator()
         return
     }
 

@@ -29,8 +29,10 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.HearingDisabled
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.SensorsOff
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -78,6 +80,7 @@ import io.github.andrewkomkov.greenpods.core.designsystem.theme.GreenPodsMotion
  * The card is present in every one of them, including locked and unsupported. A missing
  * card reads as a bug; a card that explains itself reads as the hardware (Principle II).
  */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun HeartRateCard(
     ui: HeartRateUi,
@@ -196,6 +199,7 @@ private fun MeasuringCard(
  * that could be misread as one. FR-008's failure mode is a settling sensor that looks
  * like a measurement, and it fails precisely when the two states share a silhouette.
  */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun SettlingCard(
     ui: HeartRateUi,
@@ -203,10 +207,12 @@ private fun SettlingCard(
     shape: Shape,
 ) {
     ActiveCard(modifier = modifier, shape = shape) {
-        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(44.dp),
-                strokeWidth = 3.dp,
+        Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+            // Wavy rather than a plain arc. Material 3 Expressive uses the wave to mean
+            // "working, without a known end", which is exactly a sensor finding its
+            // footing — and it is visibly not the determinate ring the battery uses.
+            CircularWavyProgressIndicator(
+                modifier = Modifier.size(48.dp),
                 color = LocalContentColor.current,
                 trackColor = LocalContentColor.current.copy(alpha = TRACK_ALPHA),
             )
@@ -239,6 +245,7 @@ private fun SettlingCard(
 }
 
 /** A wait with a reason attached, which is the difference between this and a bare spinner. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun StartingCard(
     ui: HeartRateUi,
@@ -246,11 +253,12 @@ private fun StartingCard(
     shape: Shape,
 ) {
     ActiveCard(modifier = modifier, shape = shape) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(30.dp),
-            strokeWidth = 3.dp,
+        // The Expressive loading indicator: a sequence of morphing shapes rather than a
+        // spinning arc. It says "something is being set up" where a spinner says only
+        // "wait", which is the difference this state is built around.
+        LoadingIndicator(
+            modifier = Modifier.size(38.dp),
             color = LocalContentColor.current,
-            trackColor = LocalContentColor.current.copy(alpha = TRACK_ALPHA),
         )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(ui.title, style = MaterialTheme.typography.titleMedium)
