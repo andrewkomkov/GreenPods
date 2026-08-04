@@ -1,9 +1,38 @@
+<!--
+  A pod inside a ring, where the ring is the battery arc.
+
+  Built from the app's own vocabulary rather than from a generic earbud: the gauge — 270
+  degrees with a gap at the bottom, filled from the same start angle — is the exact shape
+  `BatteryRing` draws three of on the main screen. Someone who has used the app for a week
+  recognises the icon as the thing that shows them their charge, which is more than a
+  silhouette of hardware can say.
+
+  Geometry is the 132pt design mapped onto the adaptive icon's 72pt safe zone, so no
+  launcher mask can clip the gauge open.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- The empty part of the gauge. -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M42,34c-4.4,0 -8,3.6 -8,8v12c0,4.4 3.6,8 8,8s8,-3.6 8,-8V42C50,37.6 46.4,34 42,34zM66,34c-4.4,0 -8,3.6 -8,8v12c0,4.4 3.6,8 8,8s8,-3.6 8,-8V42C74,37.6 70.4,34 66,34zM38,62v8c0,2.2 1.8,4 4,4s4,-1.8 4,-4v-8H38zM62,62v8c0,2.2 1.8,4 4,4s4,-1.8 4,-4v-8H62z" />
+        android:pathData="M33.92,74.08 A28.4,28.4 0 1 1 74.08,74.08"
+        android:strokeAlpha="0.28"
+        android:strokeColor="#04281C"
+        android:strokeLineCap="round"
+        android:strokeWidth="6" />
+    <!-- Charged, at the same 60% the design shows. -->
+    <path
+        android:pathData="M33.92,74.08 A28.4,28.4 0 0 1 66.9,28.7"
+        android:strokeColor="#EAFFF5"
+        android:strokeLineCap="round"
+        android:strokeWidth="6" />
+    <!-- The bud: a head and a stem, the way it hangs when it is in an ear. -->
+    <path
+        android:fillColor="#04281C"
+        android:pathData="M46.4,42 A7.6,7.6 0 1 0 61.6,42 A7.6,7.6 0 1 0 46.4,42 Z" />
+    <path
+        android:fillColor="#04281C"
+        android:pathData="M50.2,50.2 A3.8,3.8 0 0 1 57.8,50.2 L57.8,65.5 A3.8,3.8 0 0 1 50.2,65.5 Z" />
 </vector>
