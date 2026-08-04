@@ -376,6 +376,23 @@ all. The practical consequence for any implementation: hold the channel open acr
 accessory's reconnections rather than opening it on demand, and treat a channel opened
 mid-link as one that will never learn the service ids.
 
+Two details from that capture, now pinned in
+`core/bluetooth/src/test/resources/aap/hid-descriptors-live.txt` and
+`HidDescriptorLiveCaptureTest`, both of which the hand-transcribed fixture got wrong:
+
+- **The announcement is split across two frames**, not one: 488 bytes carrying `0x10`
+  alone, then 996 bytes carrying `0x11`, `0x12` and `0x13` together. Anything that treats
+  the first descriptor frame as the complete list finds three of the four services
+  missing. The 996-byte frame also sat 28 bytes under the old 1024-byte read buffer, which
+  is the concrete reason reassembly against the declared length is not optional.
+- **The heart-rate service names itself with a different key.** The other three carry
+  `AccessoryService` → `devmotion` / `SPL0` / `HostLibHID`; `0x13` carries
+  `HeartRateService` → `HeartRate`. A parser reading only `AccessoryService` therefore sees
+  it as unnamed. That is cosmetic and not a discovery failure — the service is found by the
+  `HeartRateService` key *or* the `com.apple.hid.heartrate-access` entitlement, and the
+  live frame carries both, twice (`HIDServiceAccessEntitlement` and
+  `HIDDeviceAccessEntitlement`).
+
 **This does not invalidate the decoders.** Everything downstream of a descriptor is
 verified against real hardware in the same session — see the field notes below.
 
