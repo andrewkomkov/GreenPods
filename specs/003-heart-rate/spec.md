@@ -271,9 +271,6 @@ app offers and confirm none contains them; clear the data and confirm it is gone
 - **SC-003**: Readings recorded to the system health store are readable by an independent
   health app, attributed to GreenPods and to the accessory that measured them, with times
   correct to the second.
-- **SC-009**: Over a measuring session, the number of readings stored in the health store
-  equals the number displayed as trustworthy — no gaps, and no duplicates after an
-  interruption.
 - **SC-004**: No reading below the confidence threshold is ever displayed or recorded,
   across every test session.
 - **SC-005**: Heart-rate values appear in no diagnostic or bug-report output, verified by
@@ -284,6 +281,9 @@ app offers and confirm none contains them; clear the data and confirm it is gone
   stopping the sensor and reading its state.
 - **SC-008**: On a model or phone where heart rate is unreachable, the feature is visible,
   locked, and carries the reason for which of the two it is.
+- **SC-009**: Over a measuring session, the number of readings stored in the health store
+  equals the number displayed as trustworthy — no gaps, and no duplicates after an
+  interruption.
 
 ## Out of Scope
 
@@ -323,3 +323,13 @@ app offers and confirm none contains them; clear the data and confirm it is gone
   writing heart rate in the same window is counted as ours.
 - **Existing work is reused**: the standard-profile route, the transport gate, the feature
   locking model and the adb surface already exist and are extended.
+- **No Powerbeats Pro 2 is available to test with.** User Story 4 is therefore built and
+  tested off-device against a fake source, and ships as *implemented and unverified on
+  hardware*. SC-003 is not claimed for that route. The work is still worth doing —
+  `HeartRateGattSource` exists, is tested, and today has no caller — but the distinction
+  between "tested" and "verified" is recorded rather than blurred.
+- **The heart-rate report's timestamp is not a wall clock.** The captured value is about
+  15 hours, which is an accessory-local counter, not a date. Times written anywhere are
+  derived by anchoring that counter against the phone's clock once per session. Recorded
+  here because reading it as an epoch would put every reading fifteen hours into the past
+  and nothing downstream would notice.
