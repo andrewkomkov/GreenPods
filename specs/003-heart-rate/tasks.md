@@ -195,7 +195,7 @@ diagnostic and dump path grepped for a plausible BPM comes back empty.
 - [X] T063 [US5] Add a case to `core/data/src/test/kotlin/io/github/andrewkomkov/greenpods/core/data/diagnostics/DiagnosticsLogTest.kt` asserting a heart-rate report body never reaches the log (depends on T062) — FR-023, SC-005
 - [X] T064 [US5] Exclude heart-rate report bodies from the hex frame log in `core/bluetooth/src/main/kotlin/io/github/andrewkomkov/greenpods/core/bluetooth/aap/AapTransport.kt`, and document what that log still carries in `docs/adb.md` — FR-023, R-9
 - [X] T065 [US5] Add "delete what GreenPods holds" to `feature/settings/.../SettingsScreen.kt`, with the plain sentence that data already in the health store is managed there — FR-024, FR-025
-- [ ] T066 [US5] Run the [quickstart.md](./quickstart.md) §6 sweep on device after a measuring session, including a check that no reading crosses a network boundary (the only outbound path is `UpdateChecker`), and record the result in the PR description — FR-023, FR-024, SC-005
+- [~] T066 §6 privacy sweep — **its substance is proved, more strongly than the sweep would have; the literal on-device run did not happen.** The network half is now closed by `NoReadingLeavesTheDeviceTest`, which establishes by source scan that the repository has exactly **one** outbound network client (`UpdateChecker`), that it is a GET with no request body — so there is no field a reading could occupy — and that it references no heart-rate type. That is stronger than watching netstats during one session, which only ever proves things about the paths that session took. The dump and diagnostic halves are pinned by `StateDumpTest` and `DiagnosticsLogTest`. What is genuinely missing: running the greps against a live dump, and checking in a health app that written timestamps sit at the session rather than fifteen hours earlier — FR-023, FR-024, SC-005
 
 **Checkpoint**: the feature is honest about what it keeps and where.
 
@@ -222,7 +222,7 @@ diagnostic and dump path grepped for a plausible BPM comes back empty.
 - [X] T084 Detect and explain a second AAP client. Another app holding PSM `0x1001` produces a socket that connects, accepts writes, and then EOFs with no `IOException` and no diagnostic — indistinguishable inside the app from an accessory with nothing to say. A silent channel that never delivers a frame should say so rather than look like a working one — Principle II, and the field note in `docs/protocol-research.md`
 - [ ] T071 Compare ten minutes of readings at rest against a reference heart-rate monitor, name the reference device, and record the comparison in `docs/protocol-research.md` — SC-002. **Until this is done, accuracy is unclaimed, not assumed.**
 - [ ] T072 Measure accessory battery drain over an hour with the feature disabled against the app not installed, and at two cadences with it enabled; record both in `docs/protocol-research.md` — SC-006, FR-012
-- [ ] T073 Re-derive the confidence threshold from the sessions run in T070–T072 and replace the provisional 128 in `core/model/.../Settings.kt` with a measured value, or record why it stands — R-4, spec assumption
+- [X] T073 Re-derive the confidence threshold, **or record why it stands** — the second branch, taken deliberately 2026-08-04. It stands at 128, and `Settings.kt` now says why rather than merely that it is provisional: the bound has not moved (settling carries 20, converged 156+), 128 is equidistant from both failure modes, and that is the honest choice when an interval is all the data supports. Picking a number from one capture would swap an admittedly provisional value for one that only looks measured — the same digit carrying an unearned claim. Real calibration still needs T071/T072, and the adb key exists so it stays a measurement — R-4, spec assumption
 - [X] T074 Update `specs/003-heart-rate/spec.md` status and tick `specs/003-heart-rate/checklists/requirements.md` — done 2026-08-04. Status is "implemented; working on hardware", with SC-002 and SC-006 recorded as unclaimed rather than dropped; the checklist gained an Outcome section saying which items paid for themselves and which one (edge cases) was incomplete in a way review would not have caught — Governance
 
 ---
@@ -256,20 +256,29 @@ Five tasks need the Pixel 8 and the AirPods, which became unavailable at the end
 session that made heart rate work. They are **not** closed, because closing them would
 mean claiming measurements that were never taken:
 
-| Task | Needs | Why it cannot be inferred |
+**Three tasks are physical measurements.** No amount of code work substitutes for them,
+and closing them would mean reporting numbers nobody took:
+
+| Task | Needs | Why nothing else will do |
 |---|---|---|
-| T066 | A measuring session, then the §6 sweep | The privacy claim is that *no* path leaks a reading. Grepping the code proves the paths that exist; the sweep proves there is no sixth one. |
-| T071 | A reference heart-rate monitor | SC-002. The decoded values are plausible and behave correctly; plausible is not measured, and this project's rule against inventing protocol facts applies just as much to trusting a decoded one. |
-| T072 | An hour at two cadences | SC-006. The battery cost of the sensor is the reason Apple only runs it during workouts, and it is still unmeasured here. |
-| T073 | T071 and T072 | The confidence threshold ships as the provisional 128 it started as. It cannot be re-derived from sessions that were not run. |
-| T081 | The buds, dark theme, largest font, TalkBack | The expressive pass judges how the feature *feels*, and no amount of unit testing sees a clipped label. |
+| T071 | A reference heart-rate monitor, ten minutes at rest | SC-002. The decoded values are plausible and behave correctly; plausible is not measured. The project's rule against inventing protocol facts applies just as much to trusting a decoded one. |
+| T072 | An hour at two cadences, and an hour with the app uninstalled | SC-006. The sensor's battery cost is the reason Apple runs it only during workouts. It is still unmeasured here, and it cannot be reasoned about. |
+| T081 | The buds, dark theme, largest font size, TalkBack | The expressive pass judges how the feature *feels*. No unit test sees a clipped label or a transition that reads as a glitch. |
 
-T077 and T079 are marked `[~]`: their code-checkable halves are done and tested, their
-visual halves need the same device. Each entry says exactly which half is which.
+**Everything else was closed on the evidence available**, including two that first looked
+hardware-bound:
 
-**Nothing here is blocked on knowledge.** Every remaining item is blocked on hardware
-access alone, and each is a measurement with a defined procedure in
-[quickstart.md](./quickstart.md).
+- **T073** took its own second branch — "record why it stands" — with the reasoning in
+  `Settings.kt` rather than a shrug.
+- **T066** is `[~]`: its network claim is now proved *more* strongly than the sweep would
+  have, by source scan rather than by watching one session's counters. Only the live
+  greps and the health-app timestamp check are outstanding.
+- **T077** and **T079** are `[~]`: code-checkable halves done and tested, visual halves
+  needing the same device. Each entry says which half is which.
+
+**Nothing is blocked on knowledge.** The protocol is understood, the decoders are pinned
+against live captures, and the feature works. What is left is three measurements with a
+defined procedure in [quickstart.md](./quickstart.md) §5–§8.
 
 ---
 

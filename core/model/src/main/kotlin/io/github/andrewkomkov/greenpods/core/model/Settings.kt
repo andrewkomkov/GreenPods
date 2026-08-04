@@ -49,10 +49,21 @@ data class GreenPodsSettings(
     /**
      * The confidence byte at or above which a reading may be shown.
      *
-     * **Provisional.** The one capture in hand only bounds it between 21 and 156 — the
-     * settling readings carried 20, the converged ones 156 and above — so 128 sits in
-     * the middle of the admissible range rather than being derived from it. It is a
-     * setting so calibration is a measurement rather than a rebuild (R-4).
+     * **Provisional, and re-examined on 2026-08-04 after the feature ran on hardware.**
+     * It stands, for a reason worth writing down rather than re-deriving each time.
+     *
+     * The bound has not moved: the settling readings carry 20 and the converged ones 156
+     * and above, so anything in 21..156 separates them on the data that exists. 128 sits
+     * in the middle of that interval, which is the honest choice when the interval is all
+     * you know — it is equidistant from both failure modes, and neither a tighter nor a
+     * looser value can be justified without a second session to argue from.
+     *
+     * Calibrating it properly needs the reference-monitor and battery sessions (T071,
+     * T072) that have not been run. Choosing a number from *one* capture would replace a
+     * value that is admittedly provisional with one that merely looks measured, which is
+     * worse: the same digit carrying an unearned claim. It is a setting precisely so that
+     * calibration stays a measurement rather than a rebuild — `gp --es cmd set --es key
+     * hrConfidenceThreshold` (R-4).
      */
     val heartRateConfidenceThreshold: Int = DEFAULT_HR_CONFIDENCE_THRESHOLD,
 ) {
