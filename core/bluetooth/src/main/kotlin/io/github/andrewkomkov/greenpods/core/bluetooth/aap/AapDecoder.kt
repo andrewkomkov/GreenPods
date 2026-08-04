@@ -146,6 +146,17 @@ class AapDecoder(
         get() = services.firstOrNull { it.isHeartRate }?.layout?.intervalFeatureReportId
 
     /**
+     * The same, for head tracking.
+     *
+     * Read from the accessory's own descriptors rather than assumed. LibrePods hard-codes
+     * `0x0E` here; that constant is true of one firmware and is exactly the bug FR-002
+     * exists to prevent, so a model that does not describe the report gets no stream
+     * rather than a guessed one.
+     */
+    val headTrackingFeatureReportId: Int?
+        get() = services.firstOrNull { it.isHeadTracking }?.layout?.intervalFeatureReportId
+
+    /**
      * True when a heart-rate service was found **and** its descriptor declares a
      * confidence field. Without one there is nothing to gate on and the feature reports
      * itself unsupported rather than showing numbers it cannot vouch for (R-2).

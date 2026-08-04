@@ -35,4 +35,22 @@ interface PodControlGateway : HeartRateController.HeartRateCommands {
         address: String,
         modes: Set<NoiseControlMode>,
     ): Boolean
+
+    /**
+     * Starts the head-orientation stream.
+     *
+     * Separate from the heart-rate pair even though the wire mechanism is the same: they
+     * are two sensors with two service ids and two report descriptors, and a shared
+     * "start a stream" would hide the day they stop agreeing.
+     */
+    suspend fun startHeadTracking(
+        address: String,
+        serviceId: Int,
+        intervalMicros: Int,
+    ): Boolean
+
+    suspend fun stopHeadTracking(
+        address: String,
+        serviceId: Int,
+    ): Boolean
 }

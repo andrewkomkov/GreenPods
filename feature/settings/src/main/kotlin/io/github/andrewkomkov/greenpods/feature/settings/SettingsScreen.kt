@@ -77,6 +77,7 @@ fun SettingsScreen(
     onBindingChanged: (HeadGestureBinding) -> Unit = {},
     onRecheckTransports: () -> Unit = {},
     onCheckForUpdates: () -> Unit = {},
+    onTryHeadGestures: () -> Unit = {},
     onOpenUpdate: (String) -> Unit = {},
     onHeartRateChanged: (Boolean) -> Unit = {},
     onHeartRateHealthConnectChanged: (Boolean) -> Unit = {},
@@ -123,6 +124,7 @@ fun SettingsScreen(
             locked = state.capabilities.headGesturesLocked,
             onHeadGesturesChanged = onHeadGesturesChanged,
             onBindingChanged = onBindingChanged,
+            onTry = onTryHeadGestures,
         )
 
         CapabilitiesSection(
@@ -385,6 +387,7 @@ private fun GestureSection(
     locked: Boolean,
     onHeadGesturesChanged: (Boolean) -> Unit,
     onBindingChanged: (HeadGestureBinding) -> Unit,
+    onTry: () -> Unit,
 ) {
     val subtitle =
         if (locked) {
@@ -427,6 +430,11 @@ private fun GestureSection(
 
     SectionCard(title = "Head gestures", subtitle = subtitle, icon = Icons.Filled.Face) {
         GestureRows(settings, enabled = true, onHeadGesturesChanged, onBindingChanged)
+        // A gesture that does not fire teaches nothing about why. This is where that is
+        // answered — live movement, and the threshold drawn where it actually is.
+        OutlinedButton(onClick = onTry, enabled = settings.headGesturesEnabled) {
+            Text("Practise a nod")
+        }
     }
 }
 

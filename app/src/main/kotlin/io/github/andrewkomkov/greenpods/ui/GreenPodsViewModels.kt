@@ -4,8 +4,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.andrewkomkov.greenpods.GreenPodsApplication
+import io.github.andrewkomkov.greenpods.core.data.head.HeadTrackingController
 import io.github.andrewkomkov.greenpods.feature.controls.ControlsViewModel
 import io.github.andrewkomkov.greenpods.feature.pods.PodsViewModel
+import io.github.andrewkomkov.greenpods.feature.settings.HeadGestureViewModel
 import io.github.andrewkomkov.greenpods.feature.settings.SettingsViewModel
 
 /**
@@ -35,6 +37,22 @@ object GreenPodsViewModels {
                 ControlsViewModel(
                     repository = app.podRepository,
                     gateway = app.controlGateway,
+                )
+            }
+        }
+
+    fun headGestures(): ViewModelProvider.Factory =
+        viewModelFactory {
+            initializer {
+                val app = GreenPodsApplication.instance
+                HeadGestureViewModel(
+                    controller =
+                        HeadTrackingController(
+                            repository = app.podRepository,
+                            gateway = app.controlGateway,
+                            serviceMemory = app.hidServiceMemory,
+                            scope = app.applicationScope,
+                        ),
                 )
             }
         }

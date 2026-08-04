@@ -157,4 +157,28 @@ class AapSession(
         if (!awaitReady()) return false
         return transport.send(HidTransport.stopReportStream(serviceId, featureReportId))
     }
+
+    /**
+     * Asks the head-tracking service to report every [intervalMicros] microseconds.
+     *
+     * Mechanically identical to the heart-rate stream — opcode 0x17 is a HID transport
+     * carrying several services, and starting any of them is a report-interval feature
+     * report — but it is written out rather than shared, because the two are allowed to
+     * diverge and a single "start whatever" would hide it when they do.
+     */
+    suspend fun startHeadTracking(
+        serviceId: Int,
+        intervalMicros: Int,
+    ): Boolean {
+        val featureReportId = decoder.headTrackingFeatureReportId ?: return false
+        if (!awaitReady()) return false
+        return transport.send(HidTransport.setReportInterval(serviceId, featureReportId, intervalMicros))
+    }
+
+    /** Stops it — interval zero, so the buds stop sensing rather than the app stop reading. */
+    suspend fun stopHeadTracking(serviceId: Int): Boolean {
+        val featureReportId = decoder.headTrackingFeatureReportId ?: return false
+        if (!awaitReady()) return false
+        return transport.send(HidTransport.stopReportStream(serviceId, featureReportId))
+    }
 }

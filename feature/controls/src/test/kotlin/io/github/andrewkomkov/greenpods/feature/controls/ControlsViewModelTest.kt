@@ -98,6 +98,23 @@ class ControlsViewModelTest {
             return accepts
         }
 
+        override suspend fun startHeadTracking(
+            address: String,
+            serviceId: Int,
+            intervalMicros: Int,
+        ): Boolean {
+            writes += "headStart=$serviceId@$intervalMicros"
+            return accepts
+        }
+
+        override suspend fun stopHeadTracking(
+            address: String,
+            serviceId: Int,
+        ): Boolean {
+            writes += "headStop=$serviceId"
+            return accepts
+        }
+
         override suspend fun stopHeartRate(
             address: String,
             serviceId: Int,

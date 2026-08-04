@@ -206,6 +206,18 @@ class AapControlGateway(
         serviceId: Int,
     ): Boolean = withChannel(address) { session.stopHeartRate(serviceId) }
 
+    override suspend fun startHeadTracking(
+        address: String,
+        serviceId: Int,
+        intervalMicros: Int,
+    ): Boolean = withChannel(address) { session.startHeadTracking(serviceId, intervalMicros) }
+
+    /** The same interval-zero stop: head tracking runs in the buds, and costs them. */
+    override suspend fun stopHeadTracking(
+        address: String,
+        serviceId: Int,
+    ): Boolean = withChannel(address) { session.stopHeadTracking(serviceId) }
+
     private suspend fun withChannel(
         address: String,
         write: suspend () -> Boolean,
