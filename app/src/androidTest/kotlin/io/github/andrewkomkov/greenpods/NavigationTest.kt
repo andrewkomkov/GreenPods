@@ -36,7 +36,7 @@ class NavigationTest {
 
         compose.onNodeWithText("Controls").performClick()
         compose.waitForIdle()
-        compose.onNode(hasText("Controls unavailable", substring = true)).assertIsDisplayed()
+        compose.onNode(hasText("This phone can't change these", substring = true)).assertIsDisplayed()
 
         compose.onNodeWithText("Settings").performClick()
         compose.waitForIdle()
@@ -44,7 +44,7 @@ class NavigationTest {
 
         compose.onNodeWithText("Pods").performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("Looking for nearby AirPods…").assertIsDisplayed()
+        compose.onNodeWithText("Looking for your AirPods…").assertIsDisplayed()
     }
 
     @Test

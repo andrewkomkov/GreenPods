@@ -57,8 +57,14 @@ class PodsScreenTest {
 
     @Test
     fun missingPermissionOffersAWayToGrantIt() {
+        // Named, not trailing: `show` has more than one callback now, and a trailing
+        // lambda binds to the last parameter — which is how this test spent a run
+        // asserting that the retry handler grants permissions.
         var requested = false
-        show(PodsUiState(emptyReason = PodsEmptyReason.NO_PERMISSION)) { requested = true }
+        show(
+            PodsUiState(emptyReason = PodsEmptyReason.NO_PERMISSION),
+            onRequestPermission = { requested = true },
+        )
 
         compose.onNodeWithText("GreenPods needs to see nearby devices").assertIsDisplayed()
         compose.onNodeWithText("Allow").performClick()
