@@ -375,12 +375,15 @@ class HeartRateController(
     }
 
     /**
-     * Gives up on a sensor that never converges.
+     * Gives up on a sensor that never converges — or was never found.
      *
-     * The edge case is a loose fit or a cold ear: confidence stays low and no amount of
-     * waiting fixes it. Waiting silently forever is the failure mode the spec names, so
-     * the session says it cannot get a reliable reading and stops drawing the buds'
-     * battery to keep not getting one.
+     * Two different waits end here and they are told apart by whether a service id was
+     * ever discovered. A loose fit or a cold ear keeps confidence low no matter how long
+     * anyone waits; an accessory that never described its sensor is not measuring badly,
+     * it is not measuring at all, and telling that user to check the fit sends them to
+     * fix something that is not broken. Waiting silently forever is the failure mode the
+     * spec names, so either way the session says what happened and stops drawing the
+     * buds' battery to keep not getting a reading.
      */
     private suspend fun checkForStall(pod: PodState) {
         val session = sessions[pod.address] ?: return
@@ -389,7 +392,13 @@ class HeartRateController(
         if (!settling) return
         if (clock() - session.startedAtMillis < settleTimeoutMillis) return
 
-        stop(pod, session, StopReason.NO_CONVERGENCE)
+        val reason =
+            if (session.source == HeartRateReading.Source.AAP && session.serviceId == null) {
+                StopReason.NOT_DISCOVERED
+            } else {
+                StopReason.NO_CONVERGENCE
+            }
+        stop(pod, session, reason)
         publish(pod)
     }
 
@@ -455,6 +464,22 @@ class HeartRateController(
         NO_CONVERGENCE(
             "noConvergence",
             "The earbuds could not get a reliable reading. Check the fit and try again.",
+        ),
+
+        /**
+         * The accessory never said which service carries heart rate.
+         *
+         * A different failure from [NO_CONVERGENCE] and it must not borrow its sentence:
+         * nothing was measured badly, nothing was measured at all. The accessory announces
+         * its sensor services once when the Bluetooth link comes up and offers no way to
+         * ask again, so a channel opened after that point can never learn the id — and
+         * reconnecting really is the fix, which is why the sentence says so rather than
+         * blaming the fit.
+         */
+        NOT_DISCOVERED(
+            "notDiscovered",
+            "These earbuds have not described their heart-rate sensor on this connection. " +
+                "Put them back in the case and take them out again.",
         ),
     }
 

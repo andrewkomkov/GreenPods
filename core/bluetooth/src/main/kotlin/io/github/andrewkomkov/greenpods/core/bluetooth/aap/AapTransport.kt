@@ -288,11 +288,14 @@ class AapTransport(
             val reader =
                 CoroutineScope(ioDispatcher).launch {
                     val buffer = ByteArray(READ_BUFFER_BYTES)
+                    var delivered = 0
+                    var failure: Throwable? = null
                     try {
                         while (true) {
                             val read = bluetoothSocket.inputStream.read(buffer)
                             if (read <= 0) break
                             reassembler.offer(buffer, read).forEach { frame ->
+                                delivered++
                                 logFrame("rx", frame)
                                 trySend(frame)
                             }
@@ -300,7 +303,24 @@ class AapTransport(
                     } catch (e: IOException) {
                         Log.d(TAG, "AAP channel closed: ${e.message}")
                     }
-                    close()
+                    // A channel that connected, accepted the handshake and then ended
+                    // without ever delivering a frame is not an accessory with nothing to
+                    // say — on this transport it is very nearly always **another app
+                    // already holding PSM 0x1001**. Only one client may, and the loser
+                    // gets exactly this: a successful connect, writes that do not throw,
+                    // and a silent EOF a few seconds later. Reported as a distinct cause
+                    // because the alternative is a channel that looks like it is working
+                    // while nothing will ever arrive on it (Principle II).
+                    if (delivered == 0) {
+                        failure =
+                            IOException(
+                                "The Apple protocol channel opened but the accessory sent nothing before " +
+                                    "closing it. Another app is most likely holding the channel — only one " +
+                                    "may at a time.",
+                            )
+                        Log.w(TAG, "AAP channel delivered no frames; suspecting another client")
+                    }
+                    close(failure)
                 }
 
             awaitClose {

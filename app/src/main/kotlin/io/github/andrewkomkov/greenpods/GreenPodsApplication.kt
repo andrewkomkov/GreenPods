@@ -14,6 +14,8 @@ import io.github.andrewkomkov.greenpods.core.data.heartrate.AndroidGattHeartRate
 import io.github.andrewkomkov.greenpods.core.data.heartrate.HeartRateController
 import io.github.andrewkomkov.greenpods.core.data.settings.SettingsRepository
 import io.github.andrewkomkov.greenpods.core.data.transport.AndroidAapProbe
+import io.github.andrewkomkov.greenpods.core.data.transport.BondedPodIdentity
+import io.github.andrewkomkov.greenpods.core.data.transport.BondedPodResolver
 import io.github.andrewkomkov.greenpods.core.data.transport.TransportGate
 import io.github.andrewkomkov.greenpods.core.data.update.UpdateChecker
 import kotlinx.coroutines.CoroutineScope
@@ -49,8 +51,14 @@ class GreenPodsApplication : Application() {
             diagnostics = diagnostics,
             scope = applicationScope,
             settings = settingsRepository.settings,
+            // Without this, every address rotation orphans the overlay, the open-channel
+            // record and the heart-rate session at once — see PodIdentity.
+            identity = podIdentity,
         )
     }
+
+    /** One name for the accessory, across the address rotations it does constantly. */
+    val podIdentity: BondedPodIdentity by lazy { BondedPodIdentity(BondedPodResolver(this)) }
 
     val environmentMonitor: AndroidEnvironmentMonitor by lazy { AndroidEnvironmentMonitor(this) }
 

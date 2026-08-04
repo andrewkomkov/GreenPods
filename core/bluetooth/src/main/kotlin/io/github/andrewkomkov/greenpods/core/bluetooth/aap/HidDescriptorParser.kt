@@ -59,6 +59,9 @@ object HidDescriptorParser {
     private const val FIELD_DESCRIPTOR = 5
     private const val FIELD_INPUT_REPORT = 7
     private const val FIELD_REQUEST = 8
+
+    /** The accessory's acknowledgement of a start, carrying the service id it acted on. */
+    private const val FIELD_STARTED = 9
     private const val FIELD_READY = 12
 
     private const val INNER_SERVICE_ID = 1
@@ -91,6 +94,21 @@ object HidDescriptorParser {
         Protobuf
             .allBytesOf(Protobuf.fields(body), FIELD_READY)
             .mapNotNull { entry -> Protobuf.varintOf(Protobuf.fields(entry), INNER_SERVICE_ID)?.toInt() }
+
+    /**
+     * The service the accessory says it has just started. Null when field 9 is absent.
+     *
+     * Captured on 2026-08-04 as `4A 02 08 13` immediately after a start request: the
+     * accessory confirming *which* service it acted on. Worth naming rather than leaving
+     * as unknown traffic — but it confirms a **command**, not a measurement, and nothing
+     * may treat it as evidence the sensor is running. On this transport an accepted write
+     * is the characteristic false positive, and only an arriving report says the sensor
+     * is on (Principle I).
+     */
+    fun startedServiceId(body: ByteArray): Int? {
+        val entry = Protobuf.bytesOf(Protobuf.fields(body), FIELD_STARTED) ?: return null
+        return Protobuf.varintOf(Protobuf.fields(entry), INNER_SERVICE_ID)?.toInt()
+    }
 
     /** An input report: which service sent it, and its bytes. Null when field 7 is absent. */
     fun inputReport(body: ByteArray): Pair<Int, ByteArray>? {

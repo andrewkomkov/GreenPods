@@ -118,7 +118,14 @@ class SettingsViewModelTest {
     ): SettingsViewModel {
         val settings =
             SettingsRepository(
-                PreferenceDataStoreFactory.create { folder.newFile("settings-${counter++}.preferences_pb") },
+                PreferenceDataStoreFactory.create(
+                    // Tied to the test's scope on purpose. `create` otherwise builds a
+                    // store on a scope that outlives the test, and with one per case this
+                    // class was leaving a dozen live stores — each with its own file
+                    // watcher — competing in the same JVM. That showed up as a flake in
+                    // whichever test happened to be waiting on a write.
+                    scope = backgroundScope,
+                ) { folder.newFile("settings-${counter++}.preferences_pb") },
             )
         val pods =
             PodRepository(

@@ -10,17 +10,22 @@ import io.github.andrewkomkov.greenpods.core.bluetooth.ble.PodSightingSource
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.transport.AapProbe
+import io.github.andrewkomkov.greenpods.core.data.transport.PodIdentity
 import io.github.andrewkomkov.greenpods.core.data.transport.ProbeOutcome
 import io.github.andrewkomkov.greenpods.core.data.transport.TransportGate
 import io.github.andrewkomkov.greenpods.core.model.BatteryComponent
 import io.github.andrewkomkov.greenpods.core.model.BatteryState
 import io.github.andrewkomkov.greenpods.core.model.ChargeStatus
 import io.github.andrewkomkov.greenpods.core.model.EarDetectionState
+import io.github.andrewkomkov.greenpods.core.model.HeartRateSensing
+import io.github.andrewkomkov.greenpods.core.model.HeartRateState
 import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 import io.github.andrewkomkov.greenpods.core.model.PodModel
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.ScanMode
+import io.github.andrewkomkov.greenpods.core.model.Transport
 import io.github.andrewkomkov.greenpods.core.model.WearState
+import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -81,11 +86,13 @@ class PodRepositoryTest {
         source: PodSightingSource,
         now: () -> Long = { 0L },
         diagnostics: DiagnosticsLog = DiagnosticsLog(clock = { 0L }),
+        identity: PodIdentity = PodIdentity.Advertised,
     ) = PodRepository(
         source = source,
         gate = TransportGate(diagnostics, AapProbe { ProbeOutcome.NoPairedDevice }),
         diagnostics = diagnostics,
         scope = backgroundScope,
+        identity = identity,
         clock = now,
         // A single tick: the age filter runs once, and the flow then completes rather
         // than leaving the test waiting on a heartbeat.
@@ -288,8 +295,78 @@ class PodRepositoryTest {
             source.lastScanMode shouldBe ScanMode.LOW_POWER
         }
 
+    @Test
+    fun `an address rotation does not orphan what the channel established`() =
+        runTest {
+            // The bug this exists to prevent, observed on hardware: taking the buds out of
+            // the case rotates the advertised address, and everything accumulated under
+            // the old one — the overlay, the open-channel record, the heart-rate session
+            // — is stranded. Heart rate read LOCKED with reports=0 while sixteen input
+            // reports a second were arriving.
+            val sightings = MutableSharedFlow<PodSighting>(replay = 8)
+            val repository =
+                repository(
+                    source = FakeSource(sightings),
+                    identity = PodIdentity { BONDED },
+                )
+
+            repository.pods.test {
+                sightings.emit(sighting(address = "AA:AA:AA:AA:AA:01"))
+                awaitPods { it.isNotEmpty() }
+
+                // The channel is established and reports a heart rate under the key the
+                // repository published.
+                repository.onAapChannelOpen(BONDED)
+                repository.onHeartRateState(
+                    address = BONDED,
+                    state = HeartRateState.Settling(sinceEpochMillis = 0L),
+                    sensing = HeartRateSensing(enabled = true, serviceId = 0x13, reportsReceived = 4),
+                )
+                awaitPods { pods -> pods.singleOrNull()?.heartRateSensing?.reportsReceived == 4 }
+
+                // Now the accessory rotates. Same earbuds, new advertised address — and a
+                // different RSSI purely so there is something for the pipeline to emit:
+                // with the fix in place the rotation changes nothing observable, so an
+                // otherwise identical sighting is collapsed by distinctUntilChanged and
+                // the test would hang on its own success.
+                sightings.emit(sighting(address = "BB:BB:BB:BB:BB:02", rssi = -42))
+
+                val after = awaitPods { pods -> pods.singleOrNull()?.rssi == -42 }
+                val pod = after.single()
+
+                // One accessory, not two, and it kept what the channel had established.
+                after.size shouldBe 1
+                pod.address shouldBe BONDED
+                pod.heartRateSensing.serviceId shouldBe 0x13
+                pod.heartRateSensing.reportsReceived shouldBe 4
+                pod.activeTransports shouldContain Transport.AAP_L2CAP
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `without a resolvable bond the advertised address is still used`() =
+        runTest {
+            // Principle II: an accessory that cannot be resolved to a bond is not hidden,
+            // it simply gets the only identity available. Inventing one would be worse
+            // than rotating.
+            val sightings = MutableSharedFlow<PodSighting>(replay = 8)
+            val repository = repository(source = FakeSource(sightings))
+
+            repository.pods.test {
+                sightings.emit(sighting(address = "AA:AA:AA:AA:AA:01"))
+                val pods = awaitPods { it.isNotEmpty() }
+
+                pods.single().address shouldBe "AA:AA:AA:AA:AA:01"
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
     private companion object {
         /** Enough headroom for conflation without letting a broken flow hang the suite. */
         const val MAX_EMISSIONS = 10
+
+        /** The paired classic address every advertisement above resolves to. */
+        const val BONDED = "74:3F:8E:C5:CD:8E"
     }
 }

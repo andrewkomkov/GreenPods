@@ -13,6 +13,7 @@ import io.github.andrewkomkov.greenpods.core.model.Transport
 import io.github.andrewkomkov.greenpods.core.model.WearState
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -302,6 +303,31 @@ class HeartRateControllerTest {
             harness.sensing.lastStopReason shouldBe "noConvergence"
             // It must stop drawing the buds' battery to keep not getting a reading.
             harness.commands.stopped shouldBe listOf(serviceId)
+        }
+
+    @Test
+    fun `an accessory that never described its sensor says so, and does not blame the fit`() =
+        runTest {
+            // The failure this separates out, found on hardware: the accessory announces
+            // its HID services once when the Bluetooth link comes up, and a channel
+            // opened after that never learns which service carries heart rate. Nothing
+            // was measured badly — nothing was measured at all, and telling the user to
+            // check the fit sends them to fix something that is not broken.
+            val harness = Harness()
+            harness.start(this)
+            // Deliberately no describeServices(): this is the whole point.
+
+            harness.nowMillis += 31_000
+            harness.tick()
+
+            val unavailable = harness.state.shouldBeInstanceOf<HeartRateState.Unavailable>()
+            harness.sensing.lastStopReason shouldBe "notDiscovered"
+            harness.sensing.serviceId shouldBe null
+            // The sentence has to name the thing that actually helps.
+            unavailable.reason shouldContain "case"
+            // And nothing was ever asked of a service that was never found.
+            harness.commands.started.shouldBeEmpty()
+            harness.commands.stopped.shouldBeEmpty()
         }
 
     @Test

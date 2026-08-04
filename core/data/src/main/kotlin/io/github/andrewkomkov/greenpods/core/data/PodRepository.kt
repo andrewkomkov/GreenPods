@@ -5,6 +5,8 @@ import io.github.andrewkomkov.greenpods.core.bluetooth.ble.PodSighting
 import io.github.andrewkomkov.greenpods.core.bluetooth.ble.PodSightingSource
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
+import io.github.andrewkomkov.greenpods.core.data.transport.BondedPodIdentity
+import io.github.andrewkomkov.greenpods.core.data.transport.PodIdentity
 import io.github.andrewkomkov.greenpods.core.data.transport.TransportGate
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.HeartRateSensing
@@ -78,6 +80,15 @@ class PodRepository(
      */
     private val scope: CoroutineScope,
     private val settings: Flow<GreenPodsSettings> = flowOf(GreenPodsSettings.Default),
+    /**
+     * What an accessory is called across address rotations.
+     *
+     * Defaults to the advertised address so nothing that has no way to resolve a bond
+     * has to pretend it does. The app supplies [BondedPodIdentity], which is what keeps
+     * an open channel, its overlay and its heart-rate session attached to the same
+     * earbuds after they come out of the case.
+     */
+    private val identity: PodIdentity = PodIdentity.Advertised,
     private val clock: () -> Long = System::currentTimeMillis,
     /**
      * Drives re-evaluation of staleness. Without it an accessory that stops
@@ -290,12 +301,24 @@ class PodRepository(
         overlays.update { it - address }
     }
 
+    /**
+     * Folds one sighting in, under the accessory's *stable* key rather than the address
+     * it happened to advertise from.
+     *
+     * This is the single place the substitution happens, and it has to be here: every
+     * consumer downstream — the overlay, the transport gate, the heart-rate session —
+     * keys off `PodState.address`, so resolving once at the point of accumulation is what
+     * makes all of them agree without any of them knowing about rotation (see
+     * [PodIdentity]). Doing it later would leave each consumer to remember, and the one
+     * that forgot would fail silently.
+     */
     private fun accumulate(
         known: Map<String, PodState>,
         sighting: PodSighting,
     ): Map<String, PodState> {
-        val fresh = sighting.toPodState()
-        val existing = known[sighting.address]
+        val key = identity.stableKey(sighting.address)
+        val fresh = sighting.toPodState().copy(address = key)
+        val existing = known[key]
         val updated =
             existing?.copy(
                 model = fresh.model,
@@ -304,7 +327,7 @@ class PodRepository(
                 rssi = fresh.rssi,
                 lastSeenEpochMillis = fresh.lastSeenEpochMillis,
             ) ?: fresh
-        return known + (sighting.address to updated)
+        return known + (key to updated)
     }
 
     /**

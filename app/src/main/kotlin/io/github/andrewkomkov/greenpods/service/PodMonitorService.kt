@@ -35,10 +35,29 @@ class PodMonitorService : LifecycleService() {
     private val app get() = GreenPodsApplication.instance
     private val lowBattery = LowBatteryNotifier()
 
+    /**
+     * Held here rather than in the container because it owns a registered receiver, and
+     * its lifetime is the service's: while GreenPods is doing continuous Bluetooth work
+     * is exactly when the channel is worth holding open.
+     */
+    private val channelKeeper by lazy {
+        AapChannelKeeper(
+            context = applicationContext,
+            gateway = app.controlGateway,
+            identity = app.podIdentity,
+            diagnostics = app.diagnostics,
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
         createChannels()
         startForeground(ONGOING_NOTIFICATION_ID, buildOngoingNotification("Scanning…"))
+
+        // Before anything else that might want the channel: the accessory's sensor
+        // announcement happens once per connection and cannot be asked for again, so the
+        // channel has to be open when the link comes up rather than when a write needs it.
+        channelKeeper.start()
 
         lifecycleScope.launch { app.earDetectionController.run() }
 
@@ -89,6 +108,13 @@ class PodMonitorService : LifecycleService() {
     ): Int {
         super.onStartCommand(intent, flags, startId)
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        // The receiver outlives the coroutine scope unless it is unregistered by hand,
+        // and a leaked one keeps opening channels for a service that is gone.
+        channelKeeper.stop()
+        super.onDestroy()
     }
 
     private fun createChannels() {

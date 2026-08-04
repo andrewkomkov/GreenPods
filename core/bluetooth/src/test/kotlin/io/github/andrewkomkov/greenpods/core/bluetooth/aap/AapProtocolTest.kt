@@ -163,6 +163,22 @@ class AapProtocolTest {
     }
 
     @Test
+    fun `a start acknowledgement names the service, and is not a measurement`() {
+        // Captured verbatim on 2026-08-04, arriving straight after a start request:
+        // field 9 carrying the service the accessory acted on. Before this it fell
+        // through to AapEvent.Unknown.
+        val frame = AapFixtures.hex("04 00 04 00 17 00 00 00 10 00 08 00 08 0F 10 03 4A 02 08 13")
+
+        val event = decoder.decode(frame)
+
+        event.shouldBeInstanceOf<AapEvent.HidServiceStarted>().serviceId shouldBe 0x13
+        // And crucially it does not make the sensor "on": an accepted command is this
+        // transport's characteristic false positive, and no state may be derived from it
+        // (Principle I). Only an arriving report says a sensor is running.
+        decoder.decode(frame).shouldBeInstanceOf<AapEvent.HidServiceStarted>()
+    }
+
+    @Test
     fun `the readiness list decodes as readiness, not as a pose`() {
         decoder
             .decode(AapFixtures.readyFrame)

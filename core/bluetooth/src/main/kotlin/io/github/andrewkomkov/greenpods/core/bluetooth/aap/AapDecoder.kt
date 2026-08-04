@@ -52,6 +52,18 @@ sealed interface AapEvent {
         val serviceIds: List<Int>,
     ) : AapEvent
 
+    /**
+     * Field 9 — the accessory acknowledging a start, naming the service it acted on.
+     *
+     * An acknowledgement of a **command**, never evidence of a measurement. Nothing may
+     * derive a running sensor from this: on this transport "the write was accepted" is
+     * the characteristic false positive, and only an arriving report means the sensor is
+     * on (Principle I).
+     */
+    data class HidServiceStarted(
+        val serviceId: Int,
+    ) : AapEvent
+
     /** One trusted-or-not heart-rate measurement, straight off the wire. */
     data class HeartRateReport(
         val serviceId: Int,
@@ -189,6 +201,13 @@ class AapDecoder(
 
         HidDescriptorParser.inputReport(body)?.let { (serviceId, report) ->
             return decodeInputReport(packet, serviceId, report)
+        }
+
+        // The accessory confirming which service it started. Surfaced so it stops being
+        // unknown traffic — but deliberately *not* a state change: this says a command
+        // was acted on, and only a report says the sensor is running (Principle I).
+        HidDescriptorParser.startedServiceId(body)?.let { serviceId ->
+            return AapEvent.HidServiceStarted(serviceId)
         }
 
         // Field 8 is our own start/stop request coming back. Nothing to report, and
