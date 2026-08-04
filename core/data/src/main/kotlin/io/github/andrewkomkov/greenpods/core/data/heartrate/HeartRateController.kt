@@ -139,6 +139,20 @@ class HeartRateController(
     private val sinkTasks =
         Channel<SinkTask>(capacity = SINK_QUEUE_CAPACITY, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
+    /**
+     * Fire-and-forget transport work.
+     *
+     * The controller must never *await* the transport. Opening a channel and waiting for
+     * it to become writable costs seconds, and doing that on the single collector that
+     * owns the state machine stops the clock: ticks queue behind it, the no-convergence
+     * timeout never fires, and the user watches a spinner that cannot resolve. Measured
+     * on hardware — three requests went out in ninety seconds where thirty were due.
+     *
+     * The same rule the health store gets, for the same reason. What the transport is
+     * *for* is being asked; what it must never be is something the session waits on.
+     */
+    private val askTasks = Channel<String>(capacity = ASK_QUEUE_CAPACITY, onBufferOverflow = BufferOverflow.DROP_LATEST)
+
     private sealed interface SinkTask {
         data class Trusted(
             val pod: PodState,
@@ -168,6 +182,12 @@ class HeartRateController(
                             is SinkTask.Stopped -> sink?.onSensingStopped(task.address)
                         }
                     }
+                }
+            }
+
+            launch {
+                for (address in askTasks) {
+                    runCatching { commands.describeServices(address) }
                 }
             }
 
@@ -274,14 +294,17 @@ class HeartRateController(
      * up before the user enabled the feature still gets asked, which is the case the old
      * wait-and-hope version could never recover from.
      */
-    private suspend fun askForServices(
+    private fun askForServices(
         pod: PodState,
         session: Session,
     ) {
         val now = clock()
         if (now - session.lastAskedAtMillis < ASK_INTERVAL_MILLIS) return
         session.lastAskedAtMillis = now
-        commands.describeServices(pod.address)
+        // Queued, never awaited — see [askTasks]. Dropping the newest when the queue is
+        // full is right here: an ask that could not be enqueued is one the next tick will
+        // make anyway, and a backlog of stale requests helps nobody.
+        askTasks.trySend(pod.address)
     }
 
     private fun startGatt(
@@ -569,6 +592,9 @@ class HeartRateController(
          * within a second or two. Asking on that cadence would be noise.
          */
         private const val ASK_INTERVAL_MILLIS = 3_000L
+
+        /** One outstanding request is enough; the next tick will ask again. */
+        private const val ASK_QUEUE_CAPACITY = 4
 
         /** [io.github.andrewkomkov.greenpods.core.bluetooth.aap.HeartRateDecodeResult.Unhandled.Reason]. */
         private const val IMPLAUSIBLE_REASON = "IMPLAUSIBLE"
