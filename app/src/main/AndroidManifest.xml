@@ -54,6 +54,7 @@
     </queries>
 
     <application
+        android:enableOnBackInvokedCallback="true"
         android:name=".GreenPodsApplication"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
