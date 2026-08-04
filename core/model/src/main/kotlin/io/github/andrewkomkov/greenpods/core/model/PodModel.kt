@@ -261,4 +261,29 @@ enum class Transport {
                 GATT -> "Bluetooth GATT"
                 AAP_L2CAP -> "Apple protocol (L2CAP)"
             }
+
+    /**
+     * What a locked feature is allowed to say on a product screen.
+     *
+     * The precise reason a transport failed — a refused PSM, a blocked reflective call —
+     * is real and worth keeping, and [TransportStatus.reason] keeps it for the diagnostics
+     * log and for adb. It is not, however, something a person who wanted to see their
+     * battery level should have to read. This is the same fact stated as a property of
+     * their phone, which is the only part of it they can act on.
+     */
+    val lockSentence: String
+        get() =
+            when (this) {
+                BLE_ADVERTISEMENT -> {
+                    "Every phone can hear what AirPods broadcast, so this always works."
+                }
+
+                GATT -> {
+                    "This phone can't reach the sensor in your earbuds."
+                }
+
+                AAP_L2CAP -> {
+                    "This phone won't let GreenPods send commands to your earbuds."
+                }
+            }
 }

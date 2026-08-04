@@ -205,6 +205,18 @@ data class PodState(
         return status.reason.ifBlank { "Needs the ${feature.requiredTransport.displayName} transport." }
     }
 
+    /**
+     * The same lock, said to a person rather than to a maintainer.
+     *
+     * [reasonFor] answers "what exactly did the stack refuse", which is the question the
+     * diagnostics log and the adb dump exist for. A product screen is answering a
+     * different one — "can I do this on this phone, and is anything wrong with my
+     * earbuds" — and the precise answer is worse at it, because it needs the reader to
+     * know what a PSM is before it means anything.
+     */
+    fun lockSentenceFor(feature: PodFeature): String =
+        if (!feature.isImplemented) feature.explanation else feature.requiredTransport.lockSentence
+
     private companion object {
         /** AAP first: it is the route more models have, and the one that carries confidence. */
         val HEART_RATE_ROUTES = listOf(PodFeature.HEART_RATE_AAP, PodFeature.HEART_RATE_GATT)
