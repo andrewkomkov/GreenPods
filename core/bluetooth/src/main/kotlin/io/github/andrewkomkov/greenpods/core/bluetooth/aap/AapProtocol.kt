@@ -237,13 +237,16 @@ enum class ControlCommand(
     HPS_GAIN_SWIPE(0x2F),
 
     /**
-     * Enables or disables the optical heart-rate sensor on models that have one
-     * (AirPods Pro 3, Powerbeats Pro 2).
+     * A control id named for the heart-rate sensor, and **not** how GreenPods starts it.
      *
-     * Toggling is understood; the *measurement* frame layout is not publicly
-     * reverse-engineered, so GreenPods cannot yet decode BPM from this transport.
-     * On Powerbeats Pro 2 the standard BLE Heart Rate Profile is used instead —
-     * see `HeartRateGattSource` — which needs neither AAP nor root.
+     * The name comes from the id table, not from observed behaviour: no capture has ever
+     * shown this command being sent or answered. What actually starts the sensor is a
+     * report-interval feature report written to the heart-rate HID service discovered
+     * over opcode `0x17`, and interval 0 stops it — see `HidTransport` and
+     * docs/protocol-research.md.
+     *
+     * Kept as an identifier so that if an accessory ever *sends* 0x30, diagnostics name
+     * it instead of reporting an unknown id (Principle IV). GreenPods never writes it.
      */
     HRM_STATE(0x30),
 

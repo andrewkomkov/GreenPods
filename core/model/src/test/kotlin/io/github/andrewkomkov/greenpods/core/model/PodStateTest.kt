@@ -3,6 +3,7 @@ package io.github.andrewkomkov.greenpods.core.model
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldNotContain
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeTypeOf
 import org.junit.Test
 import io.kotest.matchers.string.shouldContain as shouldContainText
 
@@ -82,6 +83,52 @@ class PodStateTest {
 
         state.statusOf(Transport.AAP_L2CAP).availability shouldBe TransportAvailability.NOT_PROBED
         state.reasonFor(PodFeature.HEAD_TRACKING) shouldContainText "Not checked"
+    }
+
+    @Test
+    fun `a model with no sensor is unsupported for a model reason, not a transport one`() {
+        // SC-008's two cases, seen from the gate that produces them. The distinction is
+        // not cosmetic: "these earbuds don't have it" is permanent and "this phone can't
+        // reach it" may be fixed by re-probing, so a user shown the wrong one either
+        // gives up on a working feature or waits for one that will never arrive.
+        val noSensor = pod(model = PodModel.AIRPODS_PRO_2, transports = Transport.entries.toSet())
+        val unreachable = pod(model = PodModel.AIRPODS_PRO_3, transports = setOf(Transport.BLE_ADVERTISEMENT))
+
+        val unsupported = noSensor.heartRate
+        unsupported.shouldBeTypeOf<HeartRateState.Unsupported>()
+        unsupported.reason shouldContainText "earbuds"
+        // No transport is named, because none is at fault.
+        noSensor.heartRateFeature shouldBe null
+
+        val locked = unreachable.heartRate
+        locked.shouldBeTypeOf<HeartRateState.Locked>()
+        locked.transport shouldBe Transport.AAP_L2CAP
+        locked.reason shouldContainText "Not checked"
+        // The two never collapse into one sentence.
+        (locked.reason == unsupported.reason) shouldBe false
+    }
+
+    @Test
+    fun `a sensor the transport cannot reach stays locked rather than becoming unsupported`() {
+        // The model has the hardware, so the state must keep saying so even with every
+        // transport down — otherwise a dropped channel reads as earbuds without a sensor.
+        val powerbeats = pod(model = PodModel.POWERBEATS_PRO_2, transports = emptySet())
+
+        // With nothing reachable the preferred route is named, not the last one tried:
+        // the lock has to point at the transport worth re-probing.
+        powerbeats.heartRateFeature shouldBe PodFeature.HEART_RATE_AAP
+        powerbeats.heartRate.shouldBeTypeOf<HeartRateState.Locked>().transport shouldBe Transport.AAP_L2CAP
+    }
+
+    @Test
+    fun `a live route is preferred over a merely present one, without either falling back`() {
+        // Powerbeats Pro 2 is the one model with both routes. FR-004 forbids blending
+        // them, and choosing the reachable one is not the same as falling back: whichever
+        // is chosen, the reading it produces records its own source.
+        val gattOnly = pod(model = PodModel.POWERBEATS_PRO_2, transports = setOf(Transport.GATT))
+
+        gattOnly.heartRateFeature shouldBe PodFeature.HEART_RATE_GATT
+        gattOnly.heartRate shouldBe gattOnly.heartRateSession
     }
 
     @Test

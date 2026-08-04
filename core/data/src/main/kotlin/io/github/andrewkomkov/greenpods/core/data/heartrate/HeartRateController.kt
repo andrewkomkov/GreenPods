@@ -11,6 +11,8 @@ import io.github.andrewkomkov.greenpods.core.model.PodFeature
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -101,12 +103,60 @@ class HeartRateController(
     private val gattJobs = mutableMapOf<String, Job>()
     private val gattReadings = MutableSharedFlow<Pair<String, HeartRateReading>>(extraBufferCapacity = 32)
 
+    /**
+     * Health-store work, queued rather than awaited.
+     *
+     * Found on hardware: calling the sink inline from [stop] wedged the entire controller.
+     * The state machine runs on **one** collector, so any suspend that does not return
+     * takes heart rate with it — the stop frame had already gone out, but the state was
+     * never published and no later input was ever processed, leaving the screen frozen on
+     * `MEASURING` with the sensor off and no way to re-enable it short of restarting.
+     *
+     * A channel rather than a bare `launch` per call, because the batcher is stateful:
+     * a trusted reading and the stop that flushes its window must reach it in the order
+     * they happened, and a single consumer is what guarantees that. Capacity is bounded
+     * and the oldest is dropped — a health store that has stopped answering must cost a
+     * bounded amount of memory, and losing a queued reading is a missed sample rather
+     * than a wrong one.
+     *
+     * This is what [HealthConnectLink]'s own rule — the health store is an *output* of
+     * this feature, not a dependency of it — actually requires in the caller.
+     */
+    private val sinkTasks =
+        Channel<SinkTask>(capacity = SINK_QUEUE_CAPACITY, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    private sealed interface SinkTask {
+        data class Trusted(
+            val pod: PodState,
+            val reading: HeartRateReading,
+        ) : SinkTask
+
+        data class Stopped(
+            val address: String,
+        ) : SinkTask
+    }
+
     private var latestSettings: GreenPodsSettings = GreenPodsSettings.Default
     private var latestPods: List<PodState> = emptyList()
 
     /** Collects until cancelled. */
     suspend fun run(): Unit =
         coroutineScope {
+            // Drains on its own coroutine so a slow or wedged health store cannot stall
+            // the state machine. Failures are swallowed here for the same reason they are
+            // swallowed inside the link: a provider that is updating, or a write that
+            // races a revocation, must not take the reading off the screen.
+            launch {
+                for (task in sinkTasks) {
+                    runCatching {
+                        when (task) {
+                            is SinkTask.Trusted -> sink?.onTrusted(task.pod, task.reading)
+                            is SinkTask.Stopped -> sink?.onSensingStopped(task.address)
+                        }
+                    }
+                }
+            }
+
             merge(
                 combine(pods, settings) { pods, settings -> Input.Snapshot(pods, settings) },
                 aapEvents.map(Input::Event),
@@ -239,7 +289,9 @@ class HeartRateController(
         session.state =
             if (reason == StopReason.DISABLED) HeartRateState.Off else HeartRateState.Unavailable(reason.sentence)
 
-        sink?.onSensingStopped(pod.address)
+        // Queued, never awaited — see [sinkTasks]. The partial window still gets flushed;
+        // it just cannot hold the state machine hostage while it happens.
+        sinkTasks.trySend(SinkTask.Stopped(pod.address))
     }
 
     private suspend fun onAapEvent(
@@ -297,7 +349,9 @@ class HeartRateController(
                 session.trustedCount++
                 session.lastTrustedAtMillis = reading.measuredAtEpochMillis
                 session.state = HeartRateState.Measuring(reading)
-                if (pod != null) sink?.onTrusted(pod, reading)
+                // Queued for the same reason the stop flush is: this runs once a second
+                // on the only collector the feature has.
+                if (pod != null) sinkTasks.trySend(SinkTask.Trusted(pod, reading))
             }
 
             HeartRateVerdict.SETTLING -> {
@@ -431,6 +485,14 @@ class HeartRateController(
         const val SETTLE_TIMEOUT_MILLIS = 30_000L
 
         private const val TICK_MILLIS = 1_000L
+
+        /**
+         * Two minutes of readings at the fastest cadence.
+         *
+         * Enough that an ordinary provider hiccup loses nothing, small enough that a
+         * provider which has stopped answering entirely cannot grow without bound.
+         */
+        private const val SINK_QUEUE_CAPACITY = 128
 
         /** [io.github.andrewkomkov.greenpods.core.bluetooth.aap.HeartRateDecodeResult.Unhandled.Reason]. */
         private const val IMPLAUSIBLE_REASON = "IMPLAUSIBLE"

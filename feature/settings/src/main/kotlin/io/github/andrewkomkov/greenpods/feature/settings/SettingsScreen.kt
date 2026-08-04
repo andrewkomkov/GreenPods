@@ -228,16 +228,13 @@ private fun HeartRateSection(
     onHeartRateIntervalChanged: (Int) -> Unit,
 ) {
     SectionCard(
-        title = "Heart rate",
-        subtitle =
-            "Reads the earbuds' optical sensor over Apple's protocol — no workout needed. " +
-                "It runs continuously while you wear them, which uses the earbuds' battery, " +
-                "and keeps GreenPods monitoring in the background while it is on.",
+        title = HeartRateSettingsCopy.SECTION_TITLE,
+        subtitle = HeartRateSettingsCopy.SECTION_SUBTITLE,
         icon = Icons.Filled.MonitorHeart,
     ) {
         SwitchRow(
-            title = "Measure heart rate",
-            description = "Off until you ask for it.",
+            title = HeartRateSettingsCopy.ENABLE_TITLE,
+            description = HeartRateSettingsCopy.ENABLE_DESCRIPTION,
             checked = settings.heartRateEnabled,
             onCheckedChange = onHeartRateChanged,
         )
@@ -257,8 +254,16 @@ private fun HeartRateSection(
         )
 
         Text(
-            "GreenPods shows a reading only once the earbuds report they are confident in " +
-                "it. It does not interpret the number.",
+            HeartRateSettingsCopy.CONFIDENCE_NOTE,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        // FR-013 wants active sensing discoverable, and the notification is how. Where
+        // POST_NOTIFICATIONS is denied the service still runs — saying so here is what
+        // keeps that from being a silent hole in the requirement.
+        Text(
+            HeartRateSettingsCopy.NOTIFICATION_CAVEAT,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -286,13 +291,13 @@ private fun HealthConnectSection(
     onDeleteRecords: () -> Unit,
 ) {
     SectionCard(
-        title = "Health Connect",
-        subtitle = health.availabilitySentence.ifBlank { "Checking Health Connect…" },
+        title = HeartRateSettingsCopy.HEALTH_TITLE,
+        subtitle = health.availabilitySentence.ifBlank { HeartRateSettingsCopy.HEALTH_CHECKING },
         icon = Icons.Filled.Favorite,
     ) {
         SwitchRow(
-            title = "Write readings to Health Connect",
-            description = "So your other apps can read heart rate from your earbuds.",
+            title = HeartRateSettingsCopy.HEALTH_SWITCH_TITLE,
+            description = HeartRateSettingsCopy.HEALTH_SWITCH_DESCRIPTION,
             checked = settings.heartRateHealthConnectEnabled,
             onCheckedChange = onHealthConnectChanged,
             enabled = health.isAvailable,
@@ -305,7 +310,7 @@ private fun HealthConnectSection(
 
             health.hasWritePermission -> {
                 Text(
-                    "Permission granted. Only readings the earbuds are confident in are written.",
+                    HeartRateSettingsCopy.PERMISSION_GRANTED,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -315,32 +320,30 @@ private fun HealthConnectSection(
             // does not nag, so it explains where the switch lives instead (FR-018).
             health.permissionRefused -> {
                 Text(
-                    "Permission was declined. You can grant it later in Health Connect's own " +
-                        "settings; GreenPods will not ask again.",
+                    HeartRateSettingsCopy.PERMISSION_REFUSED,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
             else -> {
-                Button(onClick = onRequestPermission) { Text("Allow writing heart rate") }
+                Button(onClick = onRequestPermission) { Text(HeartRateSettingsCopy.PERMISSION_BUTTON) }
             }
         }
 
         HorizontalDivider(Modifier.padding(vertical = 4.dp))
 
         Text(
-            "Delete what GreenPods holds",
+            HeartRateSettingsCopy.DELETE_TITLE,
             style = MaterialTheme.typography.titleSmall,
         )
         Text(
-            "Removes the heart-rate records GreenPods wrote. Anything already in Health " +
-                "Connect is managed there, including data from other apps.",
+            HeartRateSettingsCopy.DELETE_DESCRIPTION,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         TextButton(onClick = onDeleteRecords, enabled = health.isAvailable) {
-            Text("Delete GreenPods' records")
+            Text(HeartRateSettingsCopy.DELETE_BUTTON)
         }
         if (health.deletionMessage.isNotBlank()) {
             Text(health.deletionMessage, style = MaterialTheme.typography.bodySmall)

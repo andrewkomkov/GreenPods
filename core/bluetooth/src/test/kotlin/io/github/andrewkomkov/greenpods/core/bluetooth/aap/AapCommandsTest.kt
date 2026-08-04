@@ -38,7 +38,10 @@ class AapCommandsTest {
         hex(AapCommands.conversationalAwareness(true)) shouldBe "04 00 04 00 09 00 28 01 00 00 00"
         hex(AapCommands.conversationalAwareness(false)) shouldBe "04 00 04 00 09 00 28 02 00 00 00"
         hex(AapCommands.earDetection(true)) shouldBe "04 00 04 00 09 00 0A 01 00 00 00"
-        hex(AapCommands.heartRateSensor(false)) shouldBe "04 00 04 00 09 00 30 02 00 00 00"
+        // `heartRateSensor` (0x30) used to be pinned here. It was removed with the
+        // builder: its bytes were derived from an id table rather than from a capture,
+        // and pinning a guess makes it look verified. Heart rate is started by the
+        // feature report pinned in `the 1 Hz heart-rate start frame…` below.
     }
 
     @Test

@@ -328,6 +328,26 @@ app offers and confirm none contains them; clear the data and confirm it is gone
   hardware*. SC-003 is not claimed for that route. The work is still worth doing —
   `HeartRateGattSource` exists, is tested, and today has no caller — but the distinction
   between "tested" and "verified" is recorded rather than blurred.
+
+  **What was tested instead**, so the claim is checkable rather than a disclaimer:
+
+  - `HeartRateGattParserTest` pins the `0x2A37` characteristic decode against the
+    Bluetooth SIG Heart Rate Service specification — both BPM widths, the endianness of
+    the wide form, truncated values, the plausibility edges at 25 and 250 BPM, and the
+    flag bits that must be ignored rather than misread as a width selector. These byte
+    layouts come from the specification, **not from a capture**; that is the difference
+    from the AAP route, where every fixture is a real device's output.
+  - `HeartRateControllerTest` drives the controller through a fake `GattHeartRateReadings`
+    on a `POWERBEATS_PRO_2` state: the route reaches `Measuring`, every reading records
+    `source = GATT`, and a GATT source offered to a model without that feature is ignored
+    rather than used as a fallback (FR-004).
+  - `PodStateTest` covers the model carrying both routes — the live one is preferred, and
+    with neither live the lock names the preferred transport rather than the last tried.
+
+  What none of that establishes: that a Powerbeats Pro 2 actually advertises `0x180D`,
+  that its notifications arrive at the cadence assumed, or that the connection lifecycle
+  in `HeartRateGattSource` — service discovery, descriptor write, reconnection — behaves
+  against real hardware. Those need the device.
 - **The heart-rate report's timestamp is not a wall clock.** The captured value is about
   15 hours, which is an accessory-local counter, not a date. Times written anywhere are
   derived by anchoring that counter against the phone's clock once per session. Recorded

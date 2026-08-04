@@ -152,7 +152,7 @@ The report layout, matching the HID descriptor field for field:
 | 2 | 1 | **Confidence** — low while the sensor settles, ~230-240 once locked |
 | 3 | 2 | Sequence counter, LE, +1 per report |
 | 5 | 1 | Status enum, observed constant `0x02` |
-| 6 | 8 | Timestamp, nanoseconds, LE |
+| 6 | 8 | Timestamp, nanoseconds, LE — an **accessory-local counter, not an epoch**; see the implementation notes below |
 | 14 | 4 | Vendor field, observed constant `00 20 00 00` |
 
 A real capture, one report per second, showing why confidence matters:
@@ -251,6 +251,105 @@ descriptors and sat 28 bytes under `AapTransport`'s 1024-byte read buffer. One m
 crosses it, so frames must be reassembled against the declared length rather than trusted
 to arrive whole in a single read.
 
+### What building the decoder taught that reading the capture did not — 2026-08-04
+
+The two entries above are what the wire showed. This is what only writing the decoders
+surfaced, and each item is here because it was a wrong assumption first.
+
+**The report timestamp is an accessory-local counter, not an epoch.** The 8-byte
+nanosecond field reads `56339327885000` — about 15.65 hours, which is an uptime, not a
+date. Nothing in the field's shape says so; it is a plausible-looking 64-bit nanosecond
+value, and using it directly puts every reading fifteen hours into the user's past with
+no error anywhere to notice. The counter is worth keeping because its spacing is exact
+(1.000 s at 1 Hz, better than the host clock's scheduling jitter), so the resolution is to
+**anchor it once per session against the host clock and derive every wall-clock time from
+that anchor**. The anchor is never persisted: a new session gets a new one, because the
+accessory's counter restarts on its own schedule and an anchor carried across sessions is
+a silent multi-hour error.
+
+**`0x17` must be dispatched on protobuf field, never on packet length.** GreenPods
+previously branched on the length of the frame, which happened to work while head tracking
+was the only consumer. Against a real descriptor frame that branch decodes 996 bytes of
+service dictionary as a head-pose sample and produces garbage quaternions. Nothing noticed
+because head gestures are off by default — which is the general shape of the hazard: a
+length-based branch on a multiplexed transport fails silently and looks like noise.
+Field 5 is descriptors, field 7 an input report tagged with its service id, field 12 the
+readiness list; head tracking is recognised by *its own service id*, not by size.
+
+**Report fields must be resolved by usage, not by offset.** The offsets in the table
+above are correct for this firmware and are also *derivable* from the report descriptor
+the accessory sends. Asking the layout for usage `0x0400B8` (heart rate) and usage
+`0xFF15:0x0120` (confidence) costs nothing and survives a firmware that inserts a field.
+Hard-coded offsets would keep parsing after such a change and report the wrong byte as a
+heart rate — the failure mode is a plausible number, not an exception.
+
+**A descriptor with no confidence field must yield no usable layout.** This falls out of
+resolving by usage and is deliberate: the confidence gate is the only thing standing
+between the settling series and the user, so a model whose descriptor lacks that usage has
+to report itself unsupported rather than show numbers it cannot vouch for. Degrading to
+"show it ungated" would be the one failure mode this feature exists to prevent.
+
+**Report id 2 is real traffic and arrives.** The 600-byte report under vendor usage
+`0xFF0A:0x13` is declared by the heart-rate service itself, so any implementation that
+subscribes to that service meets it. It is surfaced as unhandled **by shape** — service
+id, report id, length — and never by body, which is how "nothing is dropped silently"
+and "no heart rate in any diagnostic" both hold at once.
+
+**`HRM_STATE` (`0x30`) is not the on switch, and GreenPods never writes it.** The id table
+names it for the heart-rate sensor, and it was `1` throughout the capture without ever
+being written. The actual on switch is the report-interval feature report. GreenPods keeps
+`0x30` as an *identifier* so diagnostics can name it if an accessory ever sends it, and has
+removed the command builder that existed on the assumption it started the sensor — its
+bytes had been pinned in a test against a guess rather than a capture, which made an
+untested command look verified. Whether `0x30` must be `1` for the stream to start remains
+**untested**; on this device it never had to be changed.
+
+### The descriptors are not sent unprompted, and that gates the whole feature — 2026-08-04
+
+Found while verifying heart rate end to end on the Pixel 8. It contradicts what the entry
+above assumes, so it is recorded here rather than quietly edited in.
+
+**On a freshly opened channel the accessory sends no `0x17` frames at all.** The handshake
+is answered and the full configuration comes back — 30-odd control frames including
+`30 01`, so `HRM_STATE` is already 1 without anyone writing it — but no service
+descriptors and no readiness list. `HidDescriptorParser` therefore never runs, the
+heart-rate service id is never discovered, and `HeartRateController` waits in `STARTING`
+indefinitely. That wait is correct behaviour given no service id (FR-002 forbids a
+constant), but the id never arrives.
+
+The earlier capture that *did* show descriptors was taken on a channel where **LibrePods
+had been running first**. That is the difference, and it means "descriptors arrive
+unprompted after opening the channel" was an artefact of the capture conditions rather
+than a property of the protocol. Something must ask, and GreenPods does not know the
+request.
+
+What is established, by sending the start frame directly with the id from the earlier
+capture:
+
+- **The sensor itself is willing with no discovery at all.** Writing the 1 Hz start frame
+  for service `0x13` produced heart-rate reports within a second, on a channel that had
+  never carried a descriptor.
+- **The start is acknowledged on `0x17` field 9.** The reply is
+  `04 00 04 00 17 00 00 00 10 00 08 00 08 70 10 03 4A 02 08 13` — sequence `0x70`, field 2
+  = 3, then field 9 (`0x4A`) of length 2 carrying `08 13`, the service id. Field 9 was not
+  in the field table above; it is the accessory confirming *which* service it started.
+- **Reports without a descriptor are undecodable, and correctly so.** They arrive and are
+  counted (`reportsReceived` climbed to 23) but every one becomes `UnhandledHidReport` with
+  "no usable layout", because the field offsets are resolved from the report descriptor by
+  usage. `trustedCount` stayed 0. Nothing was shown, which is the designed outcome — a
+  layout guessed from one firmware is exactly what R-2 refuses.
+
+So the remaining unknown is narrow and specific: **the request that makes the accessory
+announce its HID services.** It is one frame. Until it is known, the AAP heart-rate route
+only completes on a channel some other client has already prompted, which is not a
+shippable dependency. Candidates worth capturing next, in order: whatever LibrePods sends
+before its head-tracking start, an `0x17` frame with a field 2 the accessory reads as a
+query, and the device-info request `0x001D` whose payload this project has also never
+captured.
+
+**This does not invalidate the decoders.** Everything downstream of a descriptor is
+verified against real hardware in the same session — see the field notes below.
+
 ### The workout gate is host policy, not accessory firmware — confirmed
 
 Apple only collects heart rate on AirPods Pro 3 **while a workout is running, or while
@@ -345,6 +444,41 @@ join, and are explicitly out of scope:
 ## Field notes
 
 Things learned by running GreenPods on real hardware, as opposed to from captures.
+
+### Pixel 8, AirPods Pro 3 — heart rate end to end — 2026-08-04
+
+The first run of the whole feature against hardware rather than fixtures. Three findings,
+in descending order of how much they cost to learn.
+
+**Only one app may hold PSM `0x1001` at a time, and the loser gets no error.** LibrePods
+was installed and running on the same phone. GreenPods' socket connected — `mPort=4097`,
+`connect(), socket connected` — the handshake wrote without exception, and then
+`socket EOF, returning -1` about six seconds later with nothing ever received. No
+`IOException`, so no diagnostic; the read loop simply ended. From inside the app this is
+indistinguishable from an accessory that has nothing to say. Force-stopping the other
+client made the same code work immediately. Anyone diagnosing a silent channel should
+check for a second AAP client **before** suspecting the transport.
+
+**The decoders are correct against a live accessory.** With a channel that had descriptors
+on it, service `0x13` was discovered from the accessory's own announcement rather than
+assumed, the start frame went out, reports arrived at 1.00 s intervals, and the session
+reached `MEASURING` with 89 of 93 reports trusted and none discarded as implausible. The
+stop frame was byte-identical to the contract —
+`04 00 04 00 17 00 00 00 10 00 0F 00 08 78 42 0B 08 13 10 02 1A 05 01 00 00 00 00` — and
+reports genuinely ceased in the earbuds rather than merely stopping on screen (FR-014).
+Heart-rate report bodies were withheld from the frame log throughout, appearing as
+`rx 40 bytes, HID input report (body withheld)` (FR-023, R-9).
+
+**A blocking health-store call can wedge the entire feature.** `HeartRateController` runs
+its state machine on one collector. `stop()` awaited the trusted-reading sink *before*
+publishing the new state, and on this device that call did not return: the stop frame went
+out, the state was never published, and no later input was ever processed. The screen
+stayed on `MEASURING` with the sensor off, and heart rate could not be re-enabled without
+restarting the app — `hr on` produced no start frame at all. Health-store work is now
+queued to a separate consumer and never awaited by the state machine, which is what
+`HealthConnectLink`'s own rule — the health store is an output of this feature, not a
+dependency of it — requires of the caller. Verified fixed on the same hardware: after the
+change, `hr off` lands on `state=OFF enabled=false lastStop=disabled`.
 
 ### Samsung Galaxy S20 FE (SM-G780F), Android 13 / API 33 — 2026-08-03
 

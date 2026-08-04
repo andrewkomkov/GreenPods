@@ -58,14 +58,15 @@ object AapCommands {
         left: StemLongPressAction = right,
     ): ByteArray = AapProtocol.control(ControlCommand.CLICK_HOLD_MODE, right.wireValue, left.wireValue)
 
-    /**
-     * Powers the optical heart-rate sensor on models that have one.
-     *
-     * Sending this is understood; *reading* the resulting measurement is not — the
-     * frame layout has never been publicly decoded, so GreenPods offers the toggle
-     * only where it can also show a number, which today means nowhere over AAP.
-     */
-    fun heartRateSensor(enabled: Boolean): ByteArray = AapProtocol.control(ControlCommand.HRM_STATE, Toggle.of(enabled))
+    // Deliberately absent: a `HRM_STATE` (0x30) builder. It existed here while the
+    // measurement frame was undecoded, on the assumption that 0x30 was how the sensor
+    // was started — but it was never sent to an accessory, so its bytes were pinned
+    // against a guess rather than a capture. The sensor is actually started by writing a
+    // report-interval *feature report* to the discovered heart-rate service; see
+    // `HidTransport` and docs/protocol-research.md. Keeping a second, unverified way to
+    // "turn heart rate on" would be a trap for the next caller, so it is gone.
+    // `ControlCommand.HRM_STATE` remains, because the accessory may still send 0x30 and
+    // Principle IV wants it named rather than reported as an unknown id.
 
     // Deliberately absent: head-tracking start/stop and the device-info request. Both
     // opcodes are known (0x0017, 0x001D) but their request payloads have never been

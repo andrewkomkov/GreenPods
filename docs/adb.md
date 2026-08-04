@@ -255,6 +255,21 @@ adb shell dumpsys activity services $PKG | grep -E "isForeground|foregroundServi
 gp --es cmd monitor --es value off
 ```
 
+Enabling heart rate starts this service, because sensing lives with the channel. The
+ongoing notification is how "the sensor is running" is discoverable — but **where
+`POST_NOTIFICATIONS` is denied the service still runs and the notification is simply
+absent.** Nothing is silently sensing that the app did not disclose; the disclosure is
+just no longer on screen, which is why the settings copy states it too. To check that
+case deliberately:
+
+```bash
+adb shell pm revoke $PKG android.permission.POST_NOTIFICATIONS
+gp --es cmd hr --es value on
+gp --es cmd hr --es value status      # still reports state=SETTLING|MEASURING
+adb shell dumpsys activity services $PKG | grep isForeground   # still true
+adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
+```
+
 ## Diagnostics
 
 ```bash
