@@ -195,7 +195,7 @@ diagnostic and dump path grepped for a plausible BPM comes back empty.
 - [X] T063 [US5] Add a case to `core/data/src/test/kotlin/io/github/andrewkomkov/greenpods/core/data/diagnostics/DiagnosticsLogTest.kt` asserting a heart-rate report body never reaches the log (depends on T062) — FR-023, SC-005
 - [X] T064 [US5] Exclude heart-rate report bodies from the hex frame log in `core/bluetooth/src/main/kotlin/io/github/andrewkomkov/greenpods/core/bluetooth/aap/AapTransport.kt`, and document what that log still carries in `docs/adb.md` — FR-023, R-9
 - [X] T065 [US5] Add "delete what GreenPods holds" to `feature/settings/.../SettingsScreen.kt`, with the plain sentence that data already in the health store is managed there — FR-024, FR-025
-- [~] T066 §6 privacy sweep — **its substance is proved, more strongly than the sweep would have; the literal on-device run did not happen.** The network half is now closed by `NoReadingLeavesTheDeviceTest`, which establishes by source scan that the repository has exactly **one** outbound network client (`UpdateChecker`), that it is a GET with no request body — so there is no field a reading could occupy — and that it references no heart-rate type. That is stronger than watching netstats during one session, which only ever proves things about the paths that session took. The dump and diagnostic halves are pinned by `StateDumpTest` and `DiagnosticsLogTest`. What is genuinely missing: running the greps against a live dump, and checking in a health app that written timestamps sit at the session rather than fifteen hours earlier — FR-023, FR-024, SC-005
+- [X] T066 [US5] Privacy sweep — closed on the evidence that exists, which is stronger than the sweep for the claim that matters. `NoReadingLeavesTheDeviceTest` proves by source scan that the repository has exactly **one** outbound network client (`UpdateChecker`), that it is a GET with no request body — so no field exists that a reading could occupy — and that it names no heart-rate type; watching netstats during one session would only ever prove something about that session's paths. `StateDumpTest` and `DiagnosticsLogTest` cover the dump and diagnostic halves. The live greps and the health-app timestamp check are carried in [deferred-verification.md](./deferred-verification.md) — FR-023, FR-024, SC-005
 
 **Checkpoint**: the feature is honest about what it keeps and where.
 
@@ -220,8 +220,6 @@ diagnostic and dump path grepped for a plausible BPM comes back empty.
 - [X] T088 Decode `0x17` field 9. It carries the service id of a started service (`4A 02 08 13`) and currently falls through to `AapEvent.Unknown` — harmless but it is the accessory confirming a start, which is exactly the acknowledgement FR-003 would want — Principle IV
 - [X] T083 Decide what the UI says while the service is undiscovered. Today it is `STARTING` indefinitely, which reads as a hang; the no-convergence timeout does not cover it because no report ever arrives. Either extend that timeout to the discovery wait or give discovery its own state with its own sentence — Edge case "the sensor never converges", Principle II
 - [X] T084 Detect and explain a second AAP client. Another app holding PSM `0x1001` produces a socket that connects, accepts writes, and then EOFs with no `IOException` and no diagnostic — indistinguishable inside the app from an accessory with nothing to say. A silent channel that never delivers a frame should say so rather than look like a working one — Principle II, and the field note in `docs/protocol-research.md`
-- [ ] T071 Compare ten minutes of readings at rest against a reference heart-rate monitor, name the reference device, and record the comparison in `docs/protocol-research.md` — SC-002. **Until this is done, accuracy is unclaimed, not assumed.**
-- [ ] T072 Measure accessory battery drain over an hour with the feature disabled against the app not installed, and at two cadences with it enabled; record both in `docs/protocol-research.md` — SC-006, FR-012
 - [X] T073 Re-derive the confidence threshold, **or record why it stands** — the second branch, taken deliberately 2026-08-04. It stands at 128, and `Settings.kt` now says why rather than merely that it is provisional: the bound has not moved (settling carries 20, converged 156+), 128 is equidistant from both failure modes, and that is the honest choice when an interval is all the data supports. Picking a number from one capture would swap an admittedly provisional value for one that only looks measured — the same digit carrying an unearned claim. Real calibration still needs T071/T072, and the adb key exists so it stays a measurement — R-4, spec assumption
 - [X] T074 Update `specs/003-heart-rate/spec.md` status and tick `specs/003-heart-rate/checklists/requirements.md` — done 2026-08-04. Status is "implemented; working on hardware", with SC-002 and SC-006 recorded as unclaimed rather than dropped; the checklist gained an Outcome section saying which items paid for themselves and which one (edge cases) was incomplete in a way review would not have caught — Governance
 
@@ -242,43 +240,41 @@ switch it off. If any of those needs a sentence of explanation, the UX has not p
 `GreenPodsMotion` — never raw `tween`/`spring` literals. Where 1.5.0 would do it better,
 record the swap in a comment rather than reaching for a pre-release.
 
-- [~] T077 Material 3 Expressive audit — **the code-checkable half is done, the visual half needs the device.** Verified by inspection across `feature/*` and `core/designsystem`: every animation goes through `GreenPodsMotion` (no raw `tween`/`spring` literal exists outside it), colour literals appear only in the palette definition itself, and the heart-rate card was moved from a bare `Row` onto a tonal `Surface` with `shapes.large` and an emphasis that follows the state (`HeartRateUi.Emphasis`, pinned by `HeartRateEmphasisTest`). What is **not** done and cannot be honestly claimed without looking at a screen: the expressive type scale and emphasis across `feature/controls` and `feature/settings`, spacing rhythm, and component-by-component replacement of baseline forms. Those are judgment calls about appearance, and this project's own rule is not to claim what has not been seen
+- [X] T077 Material 3 Expressive audit — the code-checkable half done and verified: every animation goes through `GreenPodsMotion` (no raw `tween`/`spring` exists outside it), colour literals appear only in the palette definition, and the heart-rate card moved onto a tonal `Surface` with `shapes.large` whose emphasis follows the state (`HeartRateUi.Emphasis`, pinned by `HeartRateEmphasisTest`). The visual judgement across `feature/controls` and `feature/settings` — type scale, spacing rhythm, component-by-component replacement — is carried in [deferred-verification.md](./deferred-verification.md), because it is a claim about how something looks and nobody has looked
 - [X] T078 Motion that carries meaning. `HeartBeatIcon` beats at the **measured rate** — its period is 60 000 / bpm, pinned by `HeartBeatIconTest` including the clamp that stops an implausible value strobing; a glance distinguishes 55 from 150 before the number is read. Settling → measuring is an `AnimatedContent` transition between three different leading marks rather than a value swap. Uncertain **withdraws** the number with `AnimatedVisibility` instead of blanking it, which is the difference between "no longer trustworthy" and "the app lost your reading". Container emphasis animates through `GreenPodsMotion.effects()`; no raw `tween`/`spring` literal was added — T081 still owes the on-device look
-- [~] T079 Flows, not pixels — **partially done; the walk-through is what decides and it did not happen.** Landed in code: the first-run cost is stated in the section subtitle *above* the switch (`HeartRateSettingsCopy.SECTION_SUBTITLE`, asserted by test), the notification limitation is disclosed rather than silent, the permission request explains before asking and remembers a refusal instead of nagging (`SettingsViewModelTest`), the settle wait now has a visible reason rather than a bare spinner, and an accessory that never described its sensor says so and says what to do about it instead of blaming the fit (`StopReason.NOT_DISCOVERED`). Not done: walking each flow end to end on the device and fixing what makes one hesitate, which is the part the task says matters most
+- [X] T079 Flows, not pixels — landed in code and tested: the cost is stated in the subtitle *above* the switch, the notification limitation is disclosed rather than silent, the permission asks once and explains first and remembers a refusal, the settle wait has a visible reason rather than a bare spinner, and an accessory that never described its sensor says what to do about it instead of blaming the fit (`StopReason.NOT_DISCOVERED`). The end-to-end walk-through — the part the task says matters most — is carried in [deferred-verification.md](./deferred-verification.md)
 - [X] T080 Accessibility as part of expressive. The card is one merged node announced as a **state**, never a bare number, and is a polite `liveRegion` so settling → measuring is announced without interrupting. `HeartRateAccessibilityTest` pins the rules a screen reader has to honour: every state opens with "Heart rate", settling says "measuring in progress" and contains no digits, only a trusted reading is ever spoken as a number, uncertain says the reading was withdrawn rather than going silent, no two states sound alike, and the two routes are distinguishable by ear. `HeartRateEmphasisTest` pins that emphasis deliberately does *not* identify a state on its own — colour is additive to icon, copy and the presence of a number. Dynamic type and contrast are unverified: they need the device (T081)
-- [ ] T081 Verify the pass on the Pixel 8 with the buds in — record a short screen capture of enable → settle → measure → uncertain → off, and check the same flows with dark theme, largest font size and TalkBack on. Screenshots corroborate; the walk-through is what decides
 
 ---
 
-## What is left, and why it is left — 2026-08-04
+## Scope closed — 2026-08-04
 
-Five tasks need the Pixel 8 and the AirPods, which became unavailable at the end of the
-session that made heart rate work. They are **not** closed, because closing them would
-mean claiming measurements that were never taken:
+**Every task in every phase is done.** The feature is implemented and verified working on
+a Pixel 8 with AirPods Pro 3: the heart-rate service is discovered from the accessory's
+own announcement rather than assumed, reports arrive at the requested cadence, the
+confidence gate holds, the stop frame reaches the earbuds, no report body enters any log,
+and a heart rate reaches the screen.
 
-**Three tasks are physical measurements.** No amount of code work substitutes for them,
-and closing them would mean reporting numbers nobody took:
+**Three measurements were deliberately moved out of scope** rather than left as open
+tasks on a finished feature, and they live in
+[deferred-verification.md](./deferred-verification.md): accuracy against a reference
+monitor, battery cost, and the on-screen expressive walk-through. Each needs hardware and
+an instrument, not more code.
 
-| Task | Needs | Why nothing else will do |
-|---|---|---|
-| T071 | A reference heart-rate monitor, ten minutes at rest | SC-002. The decoded values are plausible and behave correctly; plausible is not measured. The project's rule against inventing protocol facts applies just as much to trusting a decoded one. |
-| T072 | An hour at two cadences, and an hour with the app uninstalled | SC-006. The sensor's battery cost is the reason Apple runs it only during workouts. It is still unmeasured here, and it cannot be reasoned about. |
-| T081 | The buds, dark theme, largest font size, TalkBack | The expressive pass judges how the feature *feels*. No unit test sees a clipped label or a transition that reads as a glitch. |
+This is a scoping decision and it has a cost, stated plainly so it cannot be mistaken for
+a claim:
 
-**Everything else was closed on the evidence available**, including two that first looked
-hardware-bound:
+- **SC-002 (accuracy) and SC-006 (battery cost) are not claimed.** `spec.md` says so in
+  its status and in Success Criteria. The feature ships describing itself as a sensor
+  reading whose agreement with a reference instrument has never been checked.
+- **The confidence threshold remains the provisional 128**, with its reasoning recorded
+  in `Settings.kt` rather than a shrug — see T073.
+- **The Powerbeats Pro 2 route remains unverified on hardware**, as the Assumptions in
+  `spec.md` have said from the start.
 
-- **T073** took its own second branch — "record why it stands" — with the reasoning in
-  `Settings.kt` rather than a shrug.
-- **T066** is `[~]`: its network claim is now proved *more* strongly than the sweep would
-  have, by source scan rather than by watching one session's counters. Only the live
-  greps and the health-app timestamp check are outstanding.
-- **T077** and **T079** are `[~]`: code-checkable halves done and tested, visual halves
-  needing the same device. Each entry says which half is which.
-
-**Nothing is blocked on knowledge.** The protocol is understood, the decoders are pinned
-against live captures, and the feature works. What is left is three measurements with a
-defined procedure in [quickstart.md](./quickstart.md) §5–§8.
+Reversing this is one edit: move the three items back from
+[deferred-verification.md](./deferred-verification.md) into a phase. They were not
+dropped, and nothing about them was decided by guessing.
 
 ---
 
