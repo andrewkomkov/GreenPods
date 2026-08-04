@@ -361,11 +361,20 @@ shippable dependency.
   `vendor_id_hook` is making the phone report Apple's vendor id; unrooted, this route is
   not available.
 
-**Still open**, in order of promise: that descriptors are sent once per *ACL* connection
-rather than per L2CAP channel, so they arrive only if the channel is already open when the
-buds reconnect from the case — this fits every observation so far and is testable with the
-buds in hand; the device-info request `0x001D`, whose payload this project has also never
-captured; and an `0x17` frame carrying a field 2 the accessory reads as a query.
+**Answered — the descriptors are tied to the ACL link, not to the L2CAP channel.**
+Tested by closing the case, waiting for the ACL to drop, then putting a bud back in and
+opening the channel the moment the link came up. Five `0x17` frames arrived unprompted
+within seconds: two descriptor frames (field 5) covering services `0x10`–`0x13`, two
+readiness frames (field 12, `08 10` then `08 11 08 12 08 13`), and one field 9 carrying
+`08 13`. Heart-rate input reports followed immediately.
+
+**Nothing has to be sent. Something has to be *listening*.** The accessory announces its
+HID services once, shortly after the Bluetooth link is established, and a client that
+opens the L2CAP channel later has already missed the announcement — which is why every
+"clean" session in this project's testing looked like the accessory had no HID services at
+all. The practical consequence for any implementation: hold the channel open across the
+accessory's reconnections rather than opening it on demand, and treat a channel opened
+mid-link as one that will never learn the service ids.
 
 **This does not invalidate the decoders.** Everything downstream of a descriptor is
 verified against real hardware in the same session — see the field notes below.
