@@ -368,13 +368,32 @@ within seconds: two descriptor frames (field 5) covering services `0x10`–`0x13
 readiness frames (field 12, `08 10` then `08 11 08 12 08 13`), and one field 9 carrying
 `08 13`. Heart-rate input reports followed immediately.
 
-**Nothing has to be sent. Something has to be *listening*.** The accessory announces its
-HID services once, shortly after the Bluetooth link is established, and a client that
-opens the L2CAP channel later has already missed the announcement — which is why every
-"clean" session in this project's testing looked like the accessory had no HID services at
-all. The practical consequence for any implementation: hold the channel open across the
-accessory's reconnections rather than opening it on demand, and treat a channel opened
-mid-link as one that will never learn the service ids.
+**The announcement is an answer, not a broadcast — and the earlier reading of this was
+wrong.** It first looked as though the accessory volunteered its HID services shortly
+after the link came up, and that a client merely had to be listening in time. It does not.
+A channel opened at the instant of the ACL connection receives the accessory's entire
+configuration and *not one word* about its HID services, across every reconnection tested.
+Sending a single request on that already-open channel produced ten `0x17` frames
+immediately — descriptors, readiness and a field 9 — followed by heart-rate reports.
+
+The earlier captures looked spontaneous only because every one of them was taken by
+firing a control command to open the channel; the command that opened it was also the
+command that provoked the answer, and that went unnoticed for several sessions.
+
+The same request goes out as part of the handshake, so "just ask" is not the whole story
+either: asked at handshake time it is answered with the configuration alone. Asked again
+once the channel has settled — a second or so later — it is answered with the services.
+
+So an implementation needs three things, and missing any one of them looks identical from
+the outside:
+
+1. **Open the channel on the ACL connection**, not on the first write a feature wants.
+   Heart rate's first write is the start command, and that needs the service id the
+   announcement carries.
+2. **Ask again once the channel is up.** Listening is not enough.
+3. **Do not tear the channel down to retry.** A retry loop that reconnects before each
+   attempt destroys the decoder session holding the announcement — observed as descriptors
+   arriving and every subsequent report being undecodable.
 
 Two details from that capture, now pinned in
 `core/bluetooth/src/test/resources/aap/hid-descriptors-live.txt` and
@@ -514,6 +533,18 @@ stop frame was byte-identical to the contract —
 reports genuinely ceased in the earbuds rather than merely stopping on screen (FR-014).
 Heart-rate report bodies were withheld from the frame log throughout, appearing as
 `rx 40 bytes, HID input report (body withheld)` (FR-023, R-9).
+
+**The accessory identity has to survive rotation, and must not swallow its neighbours.**
+Everything downstream of an advertisement was keyed by the advertised address, which
+rotates on every reconnection, so the overlay, the open-channel record and the heart-rate
+session were orphaned each time the buds came out of the case. Resolving to the bonded
+classic address fixes that — but `BondedPodResolver` answers "the one paired Apple
+accessory" for *any* Apple advertisement, which is right for its own question and ruinous
+as an identity: applied to every sighting it merged every Apple device in the room into
+one pod whose model changed with whichever beacon landed last, and AirPods Pro 3 then
+reported heart rate as *unsupported*. The identity is now taken only when the model
+already filed under that key agrees, which absorbs rotation for the paired accessory and
+leaves strangers alone.
 
 **A blocking health-store call can wedge the entire feature.** `HeartRateController` runs
 its state machine on one collector. `stop()` awaited the trusted-reading sink *before*

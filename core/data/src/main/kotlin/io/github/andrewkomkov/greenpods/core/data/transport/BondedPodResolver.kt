@@ -66,6 +66,20 @@ class BondedPodResolver(
     }
 
     /**
+     * Whether this bonded device is plausibly the accessory GreenPods is about.
+     *
+     * Separate from [resolve] on purpose, and not a convenience. [resolve] answers "which
+     * paired device does this advertisement belong to", and it deliberately short-circuits
+     * on an exact address match — so asking it whether an arbitrary bonded device is
+     * "ours" gets `Resolved(itself)` for **every** paired device on the phone, keyboards
+     * and game controllers included. Used as a filter it filters nothing, which is how
+     * this app came to open an L2CAP channel to a DualSense controller and spend three
+     * seconds retrying it.
+     */
+    @SuppressLint("MissingPermission")
+    fun isPodCandidate(device: BluetoothDevice): Boolean = device.looksLikeAppleAudio()
+
+    /**
      * A paired device that plausibly *is* the advertising accessory.
      *
      * Name matching is unlovely, but it is what is available: the Bluetooth class says

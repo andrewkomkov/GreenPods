@@ -46,6 +46,7 @@ class PodMonitorService : LifecycleService() {
             gateway = app.controlGateway,
             identity = app.podIdentity,
             diagnostics = app.diagnostics,
+            scope = lifecycleScope,
         )
     }
 

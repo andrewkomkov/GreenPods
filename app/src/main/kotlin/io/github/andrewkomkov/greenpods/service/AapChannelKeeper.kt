@@ -13,6 +13,10 @@ import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.transport.BondedPodResolver
 import io.github.andrewkomkov.greenpods.core.data.transport.PodIdentity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Holds the Apple protocol channel open across the accessory's reconnections.
@@ -39,9 +43,11 @@ class AapChannelKeeper(
     private val gateway: AapControlGateway,
     private val identity: PodIdentity,
     private val diagnostics: DiagnosticsLog,
+    private val scope: CoroutineScope,
     private val resolver: BondedPodResolver = BondedPodResolver(context),
 ) {
     private var registered = false
+    private var attempts: Job? = null
 
     private val receiver =
         object : BroadcastReceiver() {
@@ -80,6 +86,8 @@ class AapChannelKeeper(
     fun stop() {
         if (!registered) return
         registered = false
+        attempts?.cancel()
+        attempts = null
         runCatching { context.unregisterReceiver(receiver) }
     }
 
@@ -88,32 +96,103 @@ class AapChannelKeeper(
         val manager = context.getSystemService(BluetoothManager::class.java) ?: return
         val connected =
             runCatching {
-                manager.adapter?.bondedDevices.orEmpty().filter { device ->
-                    resolver.resolve(device.address) is BondedPodResolver.Resolution.Resolved
-                }
+                manager.adapter
+                    ?.bondedDevices
+                    .orEmpty()
+                    .filter(resolver::isPodCandidate)
             }.getOrDefault(emptyList())
         connected.firstOrNull()?.let(::onConnected)
+    }
+
+    private companion object {
+        /**
+         * About three seconds of trying, at a cadence that costs nothing.
+         *
+         * Sized against the window rather than against politeness: the announcement
+         * arrives within the first seconds of the link and there is no point still
+         * knocking after it has gone.
+         */
+        const val MAX_ATTEMPTS = 12
+        const val RETRY_DELAY_MILLIS = 250L
+
+        /**
+         * How long one attempt waits for the channel to carry traffic.
+         *
+         * Short on purpose: a refused channel must be discovered and retried inside the
+         * window, not waited out. The transport's own default is sized for a user who
+         * pressed a button, which is the opposite situation.
+         */
+        const val READY_TIMEOUT_MILLIS = 700L
+
+        /**
+         * How long to let the channel settle before asking the accessory to describe
+         * itself. Long enough that the request is not simply the handshake's again, short
+         * enough to stay inside the connection the announcement belongs to.
+         */
+        const val SETTLE_BEFORE_REQUEST_MILLIS = 1_500L
     }
 
     @SuppressLint("MissingPermission")
     private fun onConnected(device: BluetoothDevice) {
         // Only the accessory this app is about. Every Bluetooth device on the phone
-        // broadcasts here, and opening an L2CAP channel to a keyboard is not harmless.
-        if (resolver.resolve(device.address) !is BondedPodResolver.Resolution.Resolved) return
+        // broadcasts here, and opening an L2CAP channel to a game controller is not
+        // harmless — it is exactly what this app did until `isPodCandidate` existed,
+        // because `resolve` exact-matches any bonded address and so passed everything.
+        if (!resolver.isPodCandidate(device)) return
 
         val key = identity.stableKey(device.address)
-        val opened = gateway.connect(key)
+        attempts?.cancel()
+        attempts = scope.launch { openInsistently(key) }
+    }
+
+    /**
+     * Opens the channel, retrying briefly, because both failure modes are real.
+     *
+     * `ACTION_ACL_CONNECTED` means the *link* is up, not that the accessory will accept
+     * an L2CAP channel yet: connecting on the broadcast itself fails with "ACL connection
+     * failed", observed on every reconnection. But waiting a comfortable second instead
+     * risks the opposite failure — the accessory announces its HID services once, shortly
+     * after the link comes up, and a channel opened after that never learns which service
+     * carries heart rate.
+     *
+     * So this retries fast and gives up early rather than backing off politely: the whole
+     * useful window is the first few seconds, and after that there is nothing left to be
+     * late for.
+     */
+    private suspend fun openInsistently(address: String) {
+        repeat(MAX_ATTEMPTS) { attempt ->
+            if (gateway.openAndAwait(address, READY_TIMEOUT_MILLIS)) {
+                // Opening is not enough. A channel opened at the instant the link comes
+                // up gets the accessory's whole configuration and *not* a word about its
+                // HID services — the announcement follows a request made once the channel
+                // has settled, and it happens once per connection or never. Verified on
+                // hardware: listening alone yielded no descriptors across several
+                // reconnections; one request produced ten 0x17 frames and a discovered
+                // heart-rate service immediately.
+                delay(SETTLE_BEFORE_REQUEST_MILLIS)
+                gateway.requestNotifications()
+                diagnostics.record(
+                    DiagnosticCategory.TRANSPORT,
+                    "Opened the Apple protocol channel on connect",
+                    // Worth a line: this is the difference between "heart rate will work
+                    // on this connection" and "it cannot, and will look like a hang".
+                    "Attempt ${attempt + 1}. The accessory announces its sensor services once per connection.",
+                )
+                return
+            }
+            delay(RETRY_DELAY_MILLIS)
+        }
         diagnostics.record(
             DiagnosticCategory.TRANSPORT,
-            if (opened) "Opening the Apple protocol channel on connect" else "Could not open the channel on connect",
-            // The reason this is worth a line: it is the difference between "heart rate
-            // will work on this connection" and "it cannot, and will look like a hang".
-            "The accessory announces its sensor services once per connection.",
+            "Could not open the Apple protocol channel on connect",
+            "Gave up after $MAX_ATTEMPTS attempts. Heart rate cannot discover its sensor on this connection.",
         )
     }
 
     private fun onDisconnected(device: BluetoothDevice) {
-        if (resolver.resolve(device.address) !is BondedPodResolver.Resolution.Resolved) return
+        if (!resolver.isPodCandidate(device)) return
+        attempts?.cancel()
+        attempts = null
         gateway.disconnect()
     }
 

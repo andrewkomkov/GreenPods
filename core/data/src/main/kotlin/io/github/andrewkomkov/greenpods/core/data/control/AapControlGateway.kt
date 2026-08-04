@@ -78,6 +78,42 @@ class AapControlGateway(
         return true
     }
 
+    /**
+     * Opens the channel and waits to find out whether it actually came up.
+     *
+     * [connect] answers "the attempt started", which is all a fire-and-forget caller
+     * needs and useless to one that must retry: a channel refused because the link is
+     * still settling fails *after* connect has already returned true. This waits for the
+     * transport to report itself writable, so a caller racing the accessory's one-shot
+     * service announcement can tell a real failure from a slow start.
+     */
+    suspend fun openAndAwait(
+        address: String,
+        timeoutMillis: Long,
+    ): Boolean {
+        if (!connect(address)) return false
+        if (session.awaitReady(timeoutMillis)) return true
+
+        // Only now tear it down. Disconnecting *before* each attempt looks tidier and is
+        // actively destructive: [connect] returns the existing channel when one is
+        // already live, so a retry that starts by disconnecting kills a channel that had
+        // just come up — and with it the decoder session holding the accessory's
+        // one-per-connection service announcement. Observed exactly that: descriptors
+        // arrived, the next attempt reset the session, and every heart-rate report after
+        // it was undecodable.
+        disconnect()
+        return false
+    }
+
+    /**
+     * Re-asks the accessory to describe itself, on an already-open channel.
+     *
+     * See [AapSession.requestNotifications]: the handshake's copy of this request goes
+     * out too early to be answered with the HID service announcement, and that
+     * announcement happens once per connection or not at all.
+     */
+    suspend fun requestNotifications(): Boolean = session.requestNotifications()
+
     fun disconnect() {
         readerJob?.cancel()
         readerJob = null

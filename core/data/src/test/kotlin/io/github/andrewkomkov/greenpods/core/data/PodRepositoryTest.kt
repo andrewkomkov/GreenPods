@@ -345,6 +345,51 @@ class PodRepositoryTest {
         }
 
     @Test
+    fun `two different accessories are not merged just because one bond is paired`() =
+        runTest {
+            // The resolver answers "the one paired Apple accessory" for *any* Apple
+            // advertisement — correct for its own question, ruinous as an identity. On a
+            // real phone a second Apple accessory is usually in range, and collapsing
+            // them produced a pod whose model changed with whichever beacon landed last:
+            // AirPods Pro 3 reported heart rate as unsupported because the last packet
+            // came from something else.
+            val sightings = MutableSharedFlow<PodSighting>(replay = 8)
+            val repository =
+                repository(
+                    source = FakeSource(sightings),
+                    identity = PodIdentity { BONDED },
+                )
+
+            repository.pods.test {
+                sightings.emit(
+                    sighting(
+                        address = "AA:AA:AA:AA:AA:01",
+                        beacon = beacon(model = PodModel.AIRPODS_PRO_3),
+                    ),
+                )
+                awaitPods { it.isNotEmpty() }
+
+                sightings.emit(
+                    sighting(
+                        address = "CC:CC:CC:CC:CC:03",
+                        rssi = -70,
+                        beacon = beacon(model = PodModel.AIRPODS_2),
+                    ),
+                )
+
+                val both = awaitPods { it.size == 2 }
+
+                // Two accessories, and the paired one kept the identity that survives
+                // rotation. The stranger keeps the address it advertised from — which is
+                // the honest limit: a private address cannot be tied to a bond.
+                both.map { it.model }.toSet() shouldBe setOf(PodModel.AIRPODS_PRO_3, PodModel.AIRPODS_2)
+                both.first { it.model == PodModel.AIRPODS_PRO_3 }.address shouldBe BONDED
+                both.first { it.model == PodModel.AIRPODS_2 }.address shouldBe "CC:CC:CC:CC:CC:03"
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
     fun `without a resolvable bond the advertised address is still used`() =
         runTest {
             // Principle II: an accessory that cannot be resolved to a bond is not hidden,

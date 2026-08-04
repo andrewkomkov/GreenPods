@@ -104,6 +104,15 @@ class PodRepository(
         },
 ) {
     private val overlays = MutableStateFlow<Map<String, PodOverlay>>(emptyMap())
+
+    /**
+     * Which undecodable HID report shapes have already been written down.
+     *
+     * Cleared when a channel closes, because the next channel may genuinely differ — a
+     * shape that was undecodable only because descriptors were missed is worth recording
+     * again once there is a new session to blame it on.
+     */
+    private val seenHidShapes = mutableSetOf<String>()
     private val _scanFailure = MutableStateFlow<String?>(null)
 
     /**
@@ -206,7 +215,10 @@ class PodRepository(
     fun onAapChannelClosed(
         address: String,
         reason: String,
-    ) = gate.recordChannelClosed(address, reason)
+    ) {
+        seenHidShapes.clear()
+        gate.recordChannelClosed(address, reason)
+    }
 
     /**
      * Feeds a sighting into the pipeline as though the radio had heard it.
@@ -245,11 +257,21 @@ class PodRepository(
             // genuinely collide, and recording *that* a report arrived and what it was —
             // rather than what it said — is what lets both hold (R-9).
             is AapEvent.UnhandledHidReport -> {
-                diagnostics.record(
-                    DiagnosticCategory.UNKNOWN_TRAFFIC,
-                    "HID report on service 0x%02X has no decoder".format(event.serviceId),
-                    "report id ${event.reportId}, ${event.length} bytes, ${event.reason}",
-                )
+                // Once per distinct shape, not once per report. These arrive at the
+                // sensor's cadence — 152 identical lines in one session evicted the whole
+                // rest of the log, including the channel history needed to work out why
+                // they were undecodable in the first place. Principle IV asks that nothing
+                // be dropped silently, and the shape is what carries the information; the
+                // hundred and fifty-first copy of it carries none.
+                val shape = "%02X/%d/%s".format(event.serviceId, event.reportId, event.reason)
+                if (seenHidShapes.add(shape)) {
+                    diagnostics.record(
+                        DiagnosticCategory.UNKNOWN_TRAFFIC,
+                        "HID report on service 0x%02X has no decoder".format(event.serviceId),
+                        "report id ${event.reportId}, ${event.length} bytes, ${event.reason}. " +
+                            "Repeats are not logged again.",
+                    )
+                }
             }
 
             is AapEvent.HidServices -> {
@@ -302,23 +324,47 @@ class PodRepository(
     }
 
     /**
-     * Folds one sighting in, under the accessory's *stable* key rather than the address
-     * it happened to advertise from.
+     * The key to file a sighting under: the accessory's stable identity, unless taking it
+     * would merge two different accessories.
      *
-     * This is the single place the substitution happens, and it has to be here: every
-     * consumer downstream — the overlay, the transport gate, the heart-rate session —
-     * keys off `PodState.address`, so resolving once at the point of accumulation is what
-     * makes all of them agree without any of them knowing about rotation (see
-     * [PodIdentity]). Doing it later would leave each consumer to remember, and the one
-     * that forgot would fail silently.
+     * [PodIdentity] answers "which bond does this advertisement belong to", and with a
+     * single paired Apple accessory the honest answer for *any* Apple advertisement is
+     * that one bond. That is right for the case it was built for — the same earbuds
+     * advertising from a rotated address — and wrong when a second Apple accessory is in
+     * the room, which on a real phone is most of the time. Collapsing them produced a pod
+     * whose model changed with whichever beacon landed last, and a heart-rate feature that
+     * reported itself unsupported on AirPods Pro 3.
+     *
+     * So the model decides. Same model, same accessory: merge, and the rotation is
+     * invisible. Different model: keep them apart, and accept that rotation is only
+     * absorbed for one accessory — the honest limit of what a private address allows.
+     */
+    private fun stableKeyFor(
+        known: Map<String, PodState>,
+        fresh: PodState,
+    ): String {
+        val key = identity.stableKey(fresh.address)
+        if (key == fresh.address) return key
+        val existing = known[key] ?: return key
+        return if (existing.model == fresh.model) key else fresh.address
+    }
+
+    /**
+     * Folds one sighting in, under the accessory's stable key rather than the address it
+     * happened to advertise from.
+     *
+     * The substitution happens here and nowhere else, deliberately: every consumer
+     * downstream — the overlay, the transport gate, the heart-rate session — keys off
+     * `PodState.address`, so resolving once at the point of accumulation makes all of them
+     * agree without any of them knowing that rotation exists. Doing it later would leave
+     * each consumer to remember, and the one that forgot would fail silently.
      */
     private fun accumulate(
         known: Map<String, PodState>,
         sighting: PodSighting,
     ): Map<String, PodState> {
-        val key = identity.stableKey(sighting.address)
-        val fresh = sighting.toPodState().copy(address = key)
-        val existing = known[key]
+        val fresh = sighting.toPodState().let { it.copy(address = stableKeyFor(known, it)) }
+        val existing = known[fresh.address]
         val updated =
             existing?.copy(
                 model = fresh.model,
@@ -327,7 +373,7 @@ class PodRepository(
                 rssi = fresh.rssi,
                 lastSeenEpochMillis = fresh.lastSeenEpochMillis,
             ) ?: fresh
-        return known + (key to updated)
+        return known + (fresh.address to updated)
     }
 
     /**

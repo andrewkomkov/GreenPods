@@ -54,6 +54,28 @@ class AapSession(
     suspend fun awaitReady(): Boolean = transport.awaitReady()
 
     /**
+     * Waits a caller-chosen time for the channel to carry traffic.
+     *
+     * The default is sized for "a user pressed a button and can wait". A caller racing
+     * the accessory's one-shot service announcement needs a much shorter answer so it can
+     * try again while the window is still open.
+     */
+    suspend fun awaitReady(timeoutMillis: Long): Boolean = transport.awaitReady(timeoutMillis)
+
+    /**
+     * Asks the accessory, again, to tell the host what it has.
+     *
+     * The same request goes out with the handshake, and on a channel opened the instant
+     * the Bluetooth link comes up that is demonstrably too early: the accessory answers
+     * with its whole configuration and says nothing about its HID services. Asking a
+     * second time, once the channel has settled, is what makes it announce them — and
+     * that announcement is the only way the heart-rate service id is ever learned.
+     *
+     * A request, not a change: it writes no setting and moves nothing in the accessory.
+     */
+    suspend fun requestNotifications(): Boolean = transport.send(AapProtocol.REQUEST_NOTIFICATIONS)
+
+    /**
      * Writes a packet built elsewhere.
      *
      * The wire format is reverse-engineered and incomplete, so establishing what a new
