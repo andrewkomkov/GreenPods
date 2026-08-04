@@ -116,6 +116,16 @@ class PodRepository(
     private val _scanFailure = MutableStateFlow<String?>(null)
 
     /**
+     * Bumped when the user asks for the scan to be started again.
+     *
+     * A radio that refused a scan usually keeps refusing until something changes, and the
+     * only thing the app can change is to ask once more. Without this the "try again"
+     * the empty state offers would be a button that does nothing — worse than not
+     * offering one, because it teaches that the app's buttons are decorative.
+     */
+    private val retries = MutableStateFlow(0)
+
+    /**
      * Sightings fed in by hand rather than heard on the air.
      *
      * The states worth testing are physical — a bud leaving an ear, a case closing, a
@@ -142,10 +152,8 @@ class PodRepository(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val sighted: Flow<Map<String, PodState>> =
-        settings
-            .map { it.scanMode }
-            .distinctUntilChanged()
-            .flatMapLatest { scanMode ->
+        combine(settings.map { it.scanMode }.distinctUntilChanged(), retries, ::Pair)
+            .flatMapLatest { (scanMode, _) ->
                 merge(source.sightings(scanMode), injected)
                     .onStart { _scanFailure.value = null }
                     .catch { error ->
@@ -218,6 +226,11 @@ class PodRepository(
     ) {
         seenHidShapes.clear()
         gate.recordChannelClosed(address, reason)
+    }
+
+    /** Restarts the scan the radio refused. Safe to call when nothing is wrong. */
+    fun retryScan() {
+        retries.value += 1
     }
 
     /**

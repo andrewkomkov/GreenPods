@@ -101,6 +101,41 @@ data class HeartRateUi(
 object HeartRateCopy {
     const val UNIT = "bpm"
 
+    /** The cost, stated wherever the switch is offered rather than only in Settings. */
+    const val OFF_COST = "Uses the earbuds' battery while it runs."
+
+    const val TURN_ON = "Turn on"
+
+    const val LOCKED_BODY =
+        "This phone won't let GreenPods reach the sensor in your earbuds. Nothing is " +
+            "wrong with them."
+
+    /** The full-screen view, reached by tapping the card. */
+    const val SCREEN_TITLE = "Heart rate"
+
+    const val WHILE_MEASURING = "While it is measuring"
+
+    const val KEEP_A_BUD_IN = "Keep at least one earbud in your ear."
+
+    const val SENSING_COSTS_BATTERY = "Sensing draws on the earbuds' battery."
+
+    const val ONGOING_NOTIFICATION = "An ongoing notification shows while it runs."
+
+    const val STOP = "Stop measuring"
+
+    const val START = "Start measuring"
+
+    /**
+     * What the big view says under the number.
+     *
+     * The cadence is spelled out because the number visibly holds still between reports,
+     * and a value that does not move is read as a frozen app rather than as a sensor that
+     * answers every two seconds.
+     */
+    fun cadence(intervalMillis: Int): String =
+        "Measured by your earbuds, updated every ${intervalMillis / 1000f} s. GreenPods " +
+            "shows a number only while the earbuds report they are confident in it."
+
     fun title(state: HeartRateState): String =
         when (state) {
             is HeartRateState.Measuring -> "${state.reading.beatsPerMinute} $UNIT"
@@ -136,7 +171,7 @@ object HeartRateCopy {
             }
 
             is HeartRateState.Off -> {
-                "Turn it on in Settings. It draws on the earbuds' battery."
+                OFF_COST
             }
 
             // The state's sentence, never `sensing.lastStopReason` — that is a token for
@@ -146,8 +181,13 @@ object HeartRateCopy {
                 state.reason.ifBlank { "Sensing stopped." }
             }
 
+            // Not `state.reason` — that is the transport's own account of what it was
+            // refused, which is worth keeping in the diagnostics log and worth nothing on
+            // a screen someone opened to see their battery. The second sentence is the
+            // one that is actually needed: a lock here says nothing about the earbuds,
+            // and without being told so people conclude they bought broken ones.
             is HeartRateState.Locked -> {
-                state.reason
+                LOCKED_BODY
             }
 
             is HeartRateState.Unsupported -> {
@@ -161,11 +201,17 @@ object HeartRateCopy {
      * Named rather than hidden: the two routes reach the phone completely differently
      * and only one of them publishes a confidence value, so a user comparing readings
      * deserves to know which they are looking at (FR-026, R-10).
+     *
+     * What is named is the *difference that matters to the reader* — whether the earbuds
+     * grade their own readings — rather than the wire protocol that carries them. "Apple's
+     * protocol" and "the Bluetooth heart-rate profile" told a user nothing they could act
+     * on and everything about how the app is built; the confidence gate is the reason one
+     * of these two numbers can be trusted more than the other, and that is sayable.
      */
     fun route(source: HeartRateReading.Source): String =
         when (source) {
-            HeartRateReading.Source.AAP -> "From the earbuds, over Apple's protocol."
-            HeartRateReading.Source.GATT -> "From the earbuds, over the Bluetooth heart-rate profile."
+            HeartRateReading.Source.AAP -> "Measured by your earbuds, which say how sure they are of each reading."
+            HeartRateReading.Source.GATT -> "Measured by your earbuds. These do not say how sure they are."
         }
 
     /** What TalkBack says: the state first, and a number only inside one. */
@@ -201,6 +247,20 @@ object HeartRateCopy {
                 HeartRateState.Locked("This phone cannot open the Apple protocol channel.", Transport.AAP_L2CAP),
                 HeartRateState.Unsupported("These earbuds have no heart-rate sensor."),
             )
-        return states.flatMap { state -> listOf(title(state), body(state), spoken(state)) } + UNIT
+        return states.flatMap { state -> listOf(title(state), body(state), spoken(state)) } +
+            listOf(
+                UNIT,
+                OFF_COST,
+                TURN_ON,
+                LOCKED_BODY,
+                SCREEN_TITLE,
+                WHILE_MEASURING,
+                KEEP_A_BUD_IN,
+                SENSING_COSTS_BATTERY,
+                ONGOING_NOTIFICATION,
+                STOP,
+                START,
+                cadence(2_000),
+            )
     }
 }

@@ -1,15 +1,7 @@
 package io.github.andrewkomkov.greenpods.feature.pods
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -21,34 +13,29 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BluetoothDisabled
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.DevicesOther
 import androidx.compose.material.icons.filled.Headphones
-import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.andrewkomkov.greenpods.core.designsystem.component.BatteryRing
 import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilityRow
 import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilityUi
-import io.github.andrewkomkov.greenpods.core.designsystem.component.HeartBeatIcon
-import io.github.andrewkomkov.greenpods.core.designsystem.theme.GreenPodsMotion
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.WearState
 
@@ -61,13 +48,18 @@ fun PodsScreen(
     state: PodsUiState,
     modifier: Modifier = Modifier,
     onRequestPermission: () -> Unit = {},
+    onOpenBluetoothSettings: () -> Unit = {},
+    onRetryScan: () -> Unit = {},
     onPodSelected: (PodState) -> Unit = {},
+    onOpenHeartRate: (PodState) -> Unit = {},
+    onTurnOnHeartRate: () -> Unit = {},
 ) {
     if (state.isEmpty) {
         EmptyState(
             reason = state.emptyReason,
-            detail = state.scanFailure.orEmpty(),
             onRequestPermission = onRequestPermission,
+            onOpenBluetoothSettings = onOpenBluetoothSettings,
+            onRetryScan = onRetryScan,
             modifier = modifier.fillMaxSize(),
         )
         return
@@ -83,6 +75,8 @@ fun PodsScreen(
                 pod = pod,
                 heartRate = state.heartRateOf(pod),
                 onCheckControl = { onPodSelected(pod) },
+                onOpenHeartRate = { onOpenHeartRate(pod) },
+                onTurnOnHeartRate = onTurnOnHeartRate,
             )
         }
     }
@@ -94,28 +88,15 @@ private fun PodCard(
     heartRate: HeartRateUi,
     modifier: Modifier = Modifier,
     onCheckControl: () -> Unit = {},
+    onOpenHeartRate: () -> Unit = {},
+    onTurnOnHeartRate: () -> Unit = {},
 ) {
     Card(modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Filled.Headphones, contentDescription = null)
-                Column(Modifier.weight(1f)) {
-                    Text(pod.name, style = MaterialTheme.typography.titleLarge)
-                    pod.rssi?.let { rssi ->
-                        Text(
-                            "$rssi dBm",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
+            Header(pod)
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -145,164 +126,118 @@ private fun PodCard(
                 )
             }
 
-            HeartRateCard(ui = heartRate)
+            HeartRateCard(
+                ui = heartRate,
+                onOpen = onOpenHeartRate,
+                onTurnOn = onTurnOnHeartRate,
+            )
 
             // Gated features are listed alongside usable ones so the absence of a
             // control reads as a platform limit rather than a missing feature.
             CapabilityRow(capabilities = pod.capabilities())
 
             Button(onClick = onCheckControl, modifier = Modifier.fillMaxWidth()) {
-                Text("Check what this phone can control")
+                Text("What this phone can control")
             }
         }
     }
 }
 
 /**
- * The heart-rate card.
+ * The accessory's name, and where it is.
  *
- * Every state gets a **different shape**, not a different string in the same shape.
- * FR-008 is that a settling sensor must never be mistaken for a result, and two states
- * that differ only in wording are two states a glance cannot tell apart. So a trusted
- * reading is a number; settling is a progress form with no number in it at all; and
- * uncertain visibly withdraws the number rather than blanking the card.
- *
- * The card is present in every state including the locked and unsupported ones. A
- * missing card reads as a bug; a card that explains itself reads as the hardware
- * (Principle II).
+ * Where the signal strength in dBm used to be. That number was the last debugging value
+ * left on the main screen: it is meaningless without knowing that -40 is close and -90 is
+ * nearly gone, it moves constantly for reasons no one can act on, and it was the only
+ * thing here that needed the reader to know how radios work. What people were reading it
+ * *for* — is this mine, is it near, is it charging — is a sentence.
  */
 @Composable
-private fun HeartRateCard(
-    ui: HeartRateUi,
+private fun Header(
+    pod: PodState,
     modifier: Modifier = Modifier,
 ) {
-    // The container weight follows the state, animated so a change of emphasis is a
-    // transition rather than a repaint. Colour is additive here: every state also differs
-    // in icon, copy and whether a number is present, so nothing is carried by hue alone.
-    val container by animateColorAsState(
-        targetValue =
-            when (ui.kind.emphasis) {
-                HeartRateUi.Emphasis.PROMINENT -> MaterialTheme.colorScheme.primaryContainer
-                HeartRateUi.Emphasis.ACTIVE -> MaterialTheme.colorScheme.secondaryContainer
-                HeartRateUi.Emphasis.QUIET -> MaterialTheme.colorScheme.surfaceVariant
-            },
-        animationSpec = GreenPodsMotion.effects(),
-        label = "heart-rate-container",
-    )
-    val onContainer by animateColorAsState(
-        targetValue =
-            when (ui.kind.emphasis) {
-                HeartRateUi.Emphasis.PROMINENT -> MaterialTheme.colorScheme.onPrimaryContainer
-                HeartRateUi.Emphasis.ACTIVE -> MaterialTheme.colorScheme.onSecondaryContainer
-                HeartRateUi.Emphasis.QUIET -> MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        animationSpec = GreenPodsMotion.effects(),
-        label = "heart-rate-on-container",
-    )
+    val presence = pod.presence()
 
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = container,
-        contentColor = onContainer,
-        // Expressive corner language: generous and consistent with the pod card that
-        // contains it, rather than the tighter baseline default.
-        shape = MaterialTheme.shapes.large,
-    ) {
-        HeartRateCardContent(ui = ui, modifier = Modifier.padding(12.dp))
-    }
-}
-
-@Composable
-private fun HeartRateCardContent(
-    ui: HeartRateUi,
-    modifier: Modifier = Modifier,
-) {
     Row(
-        modifier =
-            modifier
-                .fillMaxWidth()
-                .semantics(mergeDescendants = true) {
-                    // TalkBack must hear a state, never a bare number: "81 beats per
-                    // minute" read out of context is exactly the reading-as-fact this
-                    // feature spends its whole design avoiding.
-                    contentDescription = ui.spoken
-                    // Announced as it changes, so a blind user learns that settling
-                    // finished without having to go looking. Polite, not assertive: this
-                    // is never urgent, and it must not interrupt what is being read.
-                    liveRegion = LiveRegionMode.Polite
-                },
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The leading mark is three different things, and the transition between them is
-        // where "the sensor found its footing" is expressed. A spinner that vanishes and
-        // a number that appears in its place is the same information delivered as a jump.
-        AnimatedContent(
-            targetState = ui.kind,
-            transitionSpec = {
-                (fadeIn(GreenPodsMotion.effects()) + scaleIn(GreenPodsMotion.defaultSpatial(), initialScale = 0.7f))
-                    .togetherWith(fadeOut(GreenPodsMotion.effects()))
-            },
-            label = "heart-rate-mark",
-        ) { kind ->
-            when {
-                kind.showsProgress -> {
-                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-                }
-
-                // Beating at the rate it is showing — see HeartBeatIcon. This is the one
-                // animation here whose timing is data.
-                kind == HeartRateUi.Kind.MEASURING && ui.beatsPerMinute != null -> {
-                    HeartBeatIcon(beatsPerMinute = ui.beatsPerMinute, tint = LocalContentColor.current)
-                }
-
-                else -> {
-                    Icon(Icons.Filled.MonitorHeart, contentDescription = null)
-                }
-            }
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        ) {
+            Icon(
+                Icons.Filled.Headphones,
+                contentDescription = null,
+                modifier = Modifier.padding(9.dp).size(22.dp),
+            )
         }
 
         Column(Modifier.weight(1f)) {
-            // Withdrawn, not blanked. `AnimatedVisibility` shrinking the number away is
-            // the difference between "the reading is no longer trustworthy" and "the app
-            // lost your reading" — FR-006 asks for the first, and a value that simply
-            // disappears communicates the second.
-            AnimatedVisibility(
-                visible = ui.beatsPerMinute != null,
-                enter = fadeIn(GreenPodsMotion.effects()) + expandVertically(GreenPodsMotion.defaultSpatial()),
-                exit = fadeOut(GreenPodsMotion.effects()) + shrinkVertically(GreenPodsMotion.defaultSpatial()),
+            Text(pod.name, style = MaterialTheme.typography.titleLarge)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.Bottom,
-                ) {
-                    // Kept across recompositions so the number does not blink out during
-                    // the exit animation it is the subject of.
-                    val shown = remember(ui.beatsPerMinute) { ui.beatsPerMinute }
-                    Text(
-                        shown?.toString().orEmpty(),
-                        style = MaterialTheme.typography.headlineMedium,
-                    )
-                    Text(
-                        HeartRateCopy.UNIT,
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(bottom = 4.dp),
-                    )
-                }
+                Icon(
+                    presence.icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = presence.tint(),
+                )
+                Text(
+                    presence.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-
-            if (ui.beatsPerMinute == null) {
-                Text(ui.title, style = MaterialTheme.typography.titleMedium)
-            }
-
-            Text(
-                ui.body,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
+
+/** Where the accessory is, as a phrase rather than as a measurement. */
+private data class Presence(
+    val label: String,
+    val icon: ImageVector,
+    val charging: Boolean = false,
+) {
+    @Composable
+    fun tint(): Color =
+        if (charging) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+}
+
+private fun PodState.presence(): Presence {
+    val inCase =
+        earDetection.primary == WearState.IN_CASE || earDetection.secondary == WearState.IN_CASE
+    val charging =
+        battery.left.isCharging || battery.right.isCharging || battery.case.isCharging
+
+    return when {
+        charging && inCase -> Presence("Case charging", Icons.Filled.Bolt, charging = true)
+        charging -> Presence("Charging", Icons.Filled.Bolt, charging = true)
+        inCase -> Presence("In the case", Icons.Filled.Headphones)
+        earDetection.anyInEar -> Presence("In your ears", Icons.Filled.WifiTethering)
+        else -> Presence(rssi.proximity(), Icons.Filled.WifiTethering)
+    }
+}
+
+/**
+ * Distance in the only vocabulary the advertisement transport can honestly support.
+ *
+ * RSSI is noisy enough that three buckets is already generous; a number would imply a
+ * precision the radio does not have, which is how a debug value ends up being read as a
+ * measurement.
+ */
+private fun Int?.proximity(): String =
+    when {
+        this == null -> "Nearby"
+        this > CLOSE_RSSI -> "Right here"
+        this > NEARBY_RSSI -> "Nearby"
+        else -> "Somewhere close"
+    }
 
 /** Usable capabilities first, then locked ones, each carrying its own explanation. */
 private fun PodState.capabilities(): List<CapabilityUi> =
@@ -314,7 +249,10 @@ private fun PodState.capabilities(): List<CapabilityUi> =
                 CapabilityUi(
                     label = feature.displayName,
                     available = false,
-                    reason = "${feature.explanation}\n\n${reasonFor(feature)}",
+                    // The phone's limit, not the stack's account of it: the precise
+                    // refusal is kept for the diagnostics log, where someone can act on
+                    // it (see PodState.lockSentenceFor).
+                    reason = "${feature.explanation}\n\n${lockSentenceFor(feature)}",
                 )
             }
     ).sortedWith(compareByDescending<CapabilityUi> { it.available }.thenBy { it.label })
@@ -332,48 +270,47 @@ private fun WearState.caption(): String =
  *
  * Most users will open this app with nothing nearby, so this is the screen that has to
  * make sense on its own: what the app is doing, why nothing is showing, and what — if
- * anything — they should do about it.
+ * anything — they should do about it. Every reason that has something to press offers it
+ * here rather than sending the reader to a settings screen to look for it.
  */
 @Composable
 private fun EmptyState(
     reason: PodsEmptyReason,
-    detail: String,
     onRequestPermission: () -> Unit,
+    onOpenBluetoothSettings: () -> Unit,
+    onRetryScan: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val icon: ImageVector? =
-        when (reason) {
-            PodsEmptyReason.SEARCHING -> null
-            PodsEmptyReason.BLUETOOTH_OFF -> Icons.Filled.BluetoothDisabled
-            else -> Icons.Filled.Warning
-        }
-
     val title =
         when (reason) {
-            PodsEmptyReason.SEARCHING -> "Looking for nearby AirPods…"
-            PodsEmptyReason.NO_PERMISSION -> "Nearby-devices permission needed"
+            PodsEmptyReason.SEARCHING -> "Looking for your AirPods…"
+            PodsEmptyReason.NO_PERMISSION -> "GreenPods needs to see nearby devices"
             PodsEmptyReason.BLUETOOTH_OFF -> "Bluetooth is off"
-            PodsEmptyReason.SCAN_FAILED -> "Scanning stopped"
+            PodsEmptyReason.SCAN_FAILED -> "GreenPods stopped listening"
         }
 
     val body =
         when (reason) {
             PodsEmptyReason.SEARCHING -> {
-                "Open the case near your phone. GreenPods reads the advertisement AirPods " +
-                    "broadcast continuously, so nothing needs to be paired."
+                "Open the case near your phone. GreenPods listens for what AirPods " +
+                    "broadcast all the time, so there is nothing to pair."
             }
 
             PodsEmptyReason.NO_PERMISSION -> {
-                "GreenPods needs the Bluetooth scan permission to hear those broadcasts. It " +
-                    "never asks for your location — the scan is declared as location-free."
+                "That is how it hears your AirPods. It never asks for your location."
             }
 
             PodsEmptyReason.BLUETOOTH_OFF -> {
-                "Turn Bluetooth on and GreenPods will start listening again by itself."
+                "Turn it on and GreenPods starts listening again by itself."
             }
 
+            // Deliberately not the radio's own error text. `SCAN_FAILED_INTERNAL_ERROR`
+            // is a true sentence about a Bluetooth stack and a useless one about a phone
+            // in someone's hand; the recovery is the same either way, and the exact code
+            // is in the diagnostics log for whoever can use it.
             PodsEmptyReason.SCAN_FAILED -> {
-                detail.ifBlank { "The Bluetooth radio refused to start a scan." }
+                "Your phone's Bluetooth needs a moment. Try again, or turn Bluetooth off " +
+                    "and on."
             }
         }
 
@@ -382,17 +319,72 @@ private fun EmptyState(
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (icon == null) {
-            CircularProgressIndicator()
-        } else {
-            Icon(icon, contentDescription = null)
-        }
+        EmptyMark(reason)
 
         Text(title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-        Text(body, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+        Text(
+            body,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
 
-        if (reason == PodsEmptyReason.NO_PERMISSION) {
-            Button(onClick = onRequestPermission) { Text("Grant permission") }
+        when (reason) {
+            PodsEmptyReason.NO_PERMISSION -> {
+                Button(onClick = onRequestPermission) { Text("Allow") }
+            }
+
+            PodsEmptyReason.BLUETOOTH_OFF -> {
+                OutlinedButton(onClick = onOpenBluetoothSettings) { Text("Open Bluetooth settings") }
+            }
+
+            PodsEmptyReason.SCAN_FAILED -> {
+                Button(onClick = onRetryScan) { Text("Try again") }
+            }
+
+            PodsEmptyReason.SEARCHING -> {
+                Unit
+            }
         }
     }
 }
+
+/** A spinner while it is working, and a badge — coloured by severity — when it is not. */
+@Composable
+private fun EmptyMark(reason: PodsEmptyReason) {
+    if (reason == PodsEmptyReason.SEARCHING) {
+        CircularProgressIndicator(Modifier.size(44.dp), strokeWidth = 4.dp)
+        return
+    }
+
+    val icon =
+        when (reason) {
+            PodsEmptyReason.NO_PERMISSION -> Icons.Filled.DevicesOther
+            PodsEmptyReason.BLUETOOTH_OFF -> Icons.Filled.BluetoothDisabled
+            else -> Icons.Filled.Warning
+        }
+
+    val container =
+        when (reason) {
+            PodsEmptyReason.NO_PERMISSION -> MaterialTheme.colorScheme.secondaryContainer
+            PodsEmptyReason.BLUETOOTH_OFF -> MaterialTheme.colorScheme.surfaceVariant
+            else -> MaterialTheme.colorScheme.errorContainer
+        }
+
+    val ink =
+        when (reason) {
+            PodsEmptyReason.NO_PERMISSION -> MaterialTheme.colorScheme.onSecondaryContainer
+            PodsEmptyReason.BLUETOOTH_OFF -> MaterialTheme.colorScheme.onSurfaceVariant
+            else -> MaterialTheme.colorScheme.onErrorContainer
+        }
+
+    Surface(shape = MaterialTheme.shapes.large, color = container, contentColor = ink) {
+        Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(32.dp))
+        }
+    }
+}
+
+/** Above this the accessory is within arm's reach; below the second, it is merely around. */
+private const val CLOSE_RSSI = -55
+private const val NEARBY_RSSI = -75

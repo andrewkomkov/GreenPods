@@ -100,6 +100,6 @@ class HeartRateAccessibilityTest {
             spoken(HeartRateState.Measuring(reading.copy(source = HeartRateReading.Source.GATT, confidence = null)))
 
         (aap == gatt) shouldBe false
-        gatt shouldContain "Bluetooth heart-rate profile"
+        gatt shouldContain "do not say how sure"
     }
 }

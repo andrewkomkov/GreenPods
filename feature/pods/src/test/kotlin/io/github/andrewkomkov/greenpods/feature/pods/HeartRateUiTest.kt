@@ -78,15 +78,51 @@ class HeartRateUiTest {
     }
 
     @Test
-    fun `the route that produced a number is named rather than hidden`() {
+    fun `the two routes are told apart by what they promise, not by what carries them`() {
+        // FR-026 asks that the route not be hidden, and the part of it worth not hiding
+        // is the confidence gate: one route grades its own readings and the other does
+        // not, which is the whole reason one number can be trusted further than the
+        // other. Which wire protocol carried it is true, unactionable, and the last thing
+        // on this screen that required knowing how Bluetooth works.
         val aap = HeartRateUi.of(HeartRateState.Measuring(reading))
         val gatt =
             HeartRateUi.of(
                 HeartRateState.Measuring(reading.copy(source = HeartRateReading.Source.GATT, confidence = null)),
             )
 
-        aap.body shouldContain "Apple's protocol"
-        gatt.body shouldContain "Bluetooth heart-rate profile"
+        (aap.body == gatt.body) shouldBe false
+        aap.body shouldContain "how sure they are"
+        gatt.body shouldContain "do not say how sure"
+    }
+
+    @Test
+    fun `nothing the card can say names a protocol, a channel or a transport`() {
+        // The brief's one hard rule for the product UI: no string on a screen may need
+        // the reader to know how Bluetooth works. This is that rule with teeth, and it
+        // covers every state at once so a new one cannot quietly reintroduce the jargon.
+        val jargon =
+            listOf(
+                "l2cap",
+                "psm",
+                "gatt",
+                "aap",
+                "apple\'s protocol",
+                "profile",
+                "channel",
+                "transport",
+                "socket",
+                "descriptor",
+                "0x",
+            )
+
+        HeartRateCopy.everySentence().forEach { sentence ->
+            val lower = sentence.lowercase()
+            jargon.forEach { word ->
+                if (lower.contains(word)) {
+                    throw AssertionError("Protocol jargon in heart-rate copy: \"$sentence\" contains \"$word\"")
+                }
+            }
+        }
     }
 
     @Test
