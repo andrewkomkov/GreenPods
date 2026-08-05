@@ -36,6 +36,16 @@ object AapProtocol {
     val HEADER = byteArrayOf(0x04, 0x00, 0x04, 0x00)
 
     /**
+     * Where the protobuf body starts in a `0x17` frame: header, opcode and the
+     * `00 00 10 00 <length>` prefix.
+     *
+     * Here rather than in one of its callers because three of them need it — the decoder
+     * to read a report, the transport to decide whether it may be logged, and the tests
+     * to build a frame — and a constant this shape is only correct once.
+     */
+    const val HID_BODY_OFFSET = 12
+
+    /**
      * Opening packet. The buds ignore every other packet until they receive this,
      * so it must be the first thing written after the channel opens.
      */

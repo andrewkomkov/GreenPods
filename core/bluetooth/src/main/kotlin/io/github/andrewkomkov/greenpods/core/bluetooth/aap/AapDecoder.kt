@@ -204,8 +204,8 @@ class AapDecoder(
      * an input report — and never on how long it is.
      */
     private fun decodeHid(packet: ByteArray): AapEvent? {
-        if (packet.size <= HID_BODY_OFFSET) return null
-        val body = packet.copyOfRange(HID_BODY_OFFSET, packet.size)
+        if (packet.size <= AapProtocol.HID_BODY_OFFSET) return null
+        val body = packet.copyOfRange(AapProtocol.HID_BODY_OFFSET, packet.size)
 
         HidDescriptorParser.services(body).takeIf { it.isNotEmpty() }?.let { discovered ->
             rememberServices(discovered)
@@ -477,9 +477,6 @@ class AapDecoder(
         const val COMPONENT_RIGHT = 0x02
         const val COMPONENT_LEFT = 0x04
         const val COMPONENT_CASE = 0x08
-
-        /** Header, opcode and the `00 00 10 00 <length>` prefix a `0x17` frame carries. */
-        const val HID_BODY_OFFSET = 12
 
         /**
          * The historical length rule, kept only as a fallback for frames that arrive

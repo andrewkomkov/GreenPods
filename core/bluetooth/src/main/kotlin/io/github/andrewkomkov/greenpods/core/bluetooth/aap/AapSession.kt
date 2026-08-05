@@ -6,6 +6,7 @@ import io.github.andrewkomkov.greenpods.core.model.StemLongPressAction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 
 /**
@@ -34,16 +35,48 @@ class AapSession(
     fun events(device: BluetoothDevice): Flow<AapEvent> =
         transport
             .connect(device)
-            .onStart { decoder.resetSession() }
-            .map(decoder::decode)
+            .onStart {
+                decoder.resetSession()
+                // `resetSession` clears the decoder, so nothing is known about this
+                // accessory's services again and the frame log must withhold every report
+                // body until the accessory says otherwise.
+                transport.withholdAllReportBodies()
+            }.map(decoder::decode)
+            .onEach { event -> if (event is AapEvent.HidServices) narrowWithheldServices() }
             .onCompletion { decoder.resetSession() }
+
+    /**
+     * Tells the transport which services carry measurements the frame log may not print.
+     *
+     * Only the heart-rate service does: FR-023 is about a health measurement, not about
+     * sensor traffic in general. Head-tracking reports carry orientation and are the only
+     * ground truth for where an orientation sits inside a report, so withholding them
+     * bought no privacy and cost the ability to derive their layout.
+     *
+     * Called only where the services are actually known — an empty result then means the
+     * accessory has no heart-rate service, not that it has not been asked yet.
+     */
+    private fun narrowWithheldServices() {
+        val sensitive =
+            decoder.knownServices
+                .filter(HidService::isHeartRate)
+                .map(HidService::id)
+                .toSet()
+        transport.restrictLoggingOf(sensitive)
+    }
 
     /**
      * Seeds this session with what the accessory said about itself on an earlier link.
      *
      * See [AapDecoder.restoreServices]. A live announcement always wins.
      */
-    fun restoreServices(remembered: List<HidService>) = decoder.restoreServices(remembered)
+    fun restoreServices(remembered: List<HidService>) {
+        decoder.restoreServices(remembered)
+        // Remembered services identify the heart-rate service as well as live ones do, so
+        // they are enough to narrow what the log withholds. Only narrow if the decoder
+        // actually took them: `restoreServices` declines when it already has live ones.
+        if (decoder.knownServices.isNotEmpty()) narrowWithheldServices()
+    }
 
     /** The services the accessory has described, live or remembered. */
     val describedServices: List<HidService> get() = decoder.knownServices
