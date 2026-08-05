@@ -140,7 +140,10 @@ class AapChannelKeeper(
         // because `resolve` exact-matches any bonded address and so passed everything.
         if (!resolver.isPodCandidate(device)) return
 
-        val key = identity.stableKey(device.address)
+        // No model to offer: this is a bonded device, not an advertisement, so it resolves
+        // by exact address and needs no corroboration. Null would mean it is not paired to
+        // this phone after all, and this app has no business opening a channel to it.
+        val key = identity.stableKey(device.address, model = null) ?: return
         attempts?.cancel()
         attempts = scope.launch { openInsistently(key) }
     }

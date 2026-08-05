@@ -73,12 +73,27 @@ class PodOverlayTest {
             .battery.left.levelPercent shouldBe 83
     }
 
+    /**
+     * The regression this fix exists for.
+     *
+     * The channel says a bud's wear changed but not which bud; the advertisement says the
+     * side, because it carries the primary flag. While the channel's version was folded in
+     * here, it overwrote the advertisement's — and taking out the left bud made the app
+     * report the right one as out.
+     */
     @Test
-    fun `ear detection from the channel is folded in`() {
-        val state = EarDetectionState(WearState.IN_EAR, WearState.IN_CASE)
-        val overlay = PodOverlay.Empty.reduce(AapEvent.EarDetection(state))
+    fun `a wear change from the channel never overwrites the side the advertisement resolved`() {
+        val fromTheAir =
+            pod.copy(earDetection = EarDetectionState(left = WearState.OUT_OF_EAR, right = WearState.IN_EAR))
 
-        overlay.applyTo(pod).earDetection shouldBe state
+        val overlay =
+            PodOverlay.Empty
+                .reduce(AapEvent.EarDetection(first = WearState.IN_EAR, second = WearState.OUT_OF_EAR))
+                // The same physical state, the other way round — the order moves on its
+                // own, which is the second reason this must not reach per-side state.
+                .reduce(AapEvent.EarDetection(first = WearState.OUT_OF_EAR, second = WearState.IN_EAR))
+
+        overlay.applyTo(fromTheAir).earDetection shouldBe fromTheAir.earDetection
     }
 
     @Test

@@ -82,21 +82,53 @@ class AapProtocolTest {
     }
 
     @Test
-    fun `ear detection reports both buds`() {
-        val state =
+    fun `ear detection reports both buds and names no side`() {
+        val event =
             decoder
                 .decode(bytes("04 00 04 00 06 00 00 02"))
                 .shouldBeInstanceOf<AapEvent.EarDetection>()
-                .state
 
-        // Which byte is which *side* is not established — see the note in
-        // docs/protocol-research.md. What this fixture pins is that both buds are
-        // reported and that the two states differ; the side mapping is checked against
-        // hardware, not here.
-        state.left shouldBe WearState.IN_EAR
-        state.right shouldBe WearState.IN_CASE
-        state.anyInEar shouldBe true
-        state.bothInEar shouldBe false
+        event.first shouldBe WearState.IN_EAR
+        event.second shouldBe WearState.IN_CASE
+    }
+
+    /**
+     * The captures behind [AapDecoder]'s note on this frame, as a fixture.
+     *
+     * Taken on 2026-08-05 from AirPods Pro 3 over a live channel. Two things are pinned
+     * here, and together they are why this decoder attributes no side.
+     *
+     * Removing either bud moved the *same* byte, which rules out both left-then-right and
+     * right-then-left. And with one bud out and left out, the encoding then flipped — the
+     * same physical state, the other way round — which rules out any fixed order at all.
+     */
+    @Test
+    fun `neither byte belongs to a side`() {
+        fun frame(hex: String) =
+            decoder
+                .decode(bytes(hex))
+                .shouldBeInstanceOf<AapEvent.EarDetection>()
+
+        // 12:43 — left bud out, then back. 12:58 — right bud out, then back.
+        val leftOut = frame("04 00 04 00 06 00 00 01")
+        val rightOut = frame("04 00 04 00 06 00 00 01")
+        val bothIn = frame("04 00 04 00 06 00 00 00")
+
+        // Either bud produces the identical frame, so nothing here says which one moved.
+        leftOut shouldBe rightOut
+        leftOut.second shouldBe WearState.OUT_OF_EAR
+        bothIn.first shouldBe WearState.IN_EAR
+        bothIn.second shouldBe WearState.IN_EAR
+
+        // 13:10:28 and 13:10:38 — one bud out and still out across both, yet the order
+        // moved. Whatever these two positions are, they are not fixed to the hardware.
+        val outFirst = frame("04 00 04 00 06 00 01 00")
+        val outSecond = frame("04 00 04 00 06 00 00 01")
+
+        outFirst.first shouldBe WearState.OUT_OF_EAR
+        outFirst.second shouldBe WearState.IN_EAR
+        outSecond.first shouldBe WearState.IN_EAR
+        outSecond.second shouldBe WearState.OUT_OF_EAR
     }
 
     @Test
