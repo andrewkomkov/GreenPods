@@ -3,7 +3,6 @@ package io.github.andrewkomkov.greenpods.core.bluetooth.aap
 import io.github.andrewkomkov.greenpods.core.model.BatteryComponent
 import io.github.andrewkomkov.greenpods.core.model.BatteryState
 import io.github.andrewkomkov.greenpods.core.model.ChargeStatus
-import io.github.andrewkomkov.greenpods.core.model.EarDetectionState
 import io.github.andrewkomkov.greenpods.core.model.HeadTrackingSample
 import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 import io.github.andrewkomkov.greenpods.core.model.WearState
@@ -14,8 +13,15 @@ sealed interface AapEvent {
         val state: BatteryState,
     ) : AapEvent
 
+    /**
+     * Two buds' wear, in an order the frame does not explain — **and not by side**.
+     *
+     * Deliberately not an `EarDetectionState`: that type is keyed by side, and the side is
+     * not in this frame. See [AapDecoder.decodeEarDetection].
+     */
     data class EarDetection(
-        val state: EarDetectionState,
+        val first: WearState,
+        val second: WearState,
     ) : AapEvent
 
     data class NoiseControl(
@@ -345,23 +351,32 @@ class AapDecoder(
     }
 
     /**
-     * Two wear states, in an order that is **not yet verified against hardware**.
+     * Two buds' wear states, in an order that tracks **role, not side**.
      *
-     * The advertisement labels its two buds primary and secondary and carries a flag
-     * saying which side the primary is; this payload carries neither. It is read here in
-     * the same order the advertisement uses, which is the only convention the accessory
-     * has been observed to follow — but "the only convention observed" is not the same as
-     * "measured", and if it is wrong the two sides are simply swapped. Recorded as an
-     * open question in `docs/protocol-research.md` rather than left as a silent
-     * assumption; it takes one bud out of one ear to settle.
+     * This used to be read as left-then-right, in the order the advertisement uses, on the
+     * reasoning that the only thing that could be wrong was the swap. Two captures on
+     * 2026-08-05 (Pixel 8, Android 17, AirPods Pro 3, live channel) say otherwise.
+     *
+     * First: taking out the **left** bud moved the second byte, and so did taking out the
+     * **right** one, with the first byte at `0x00` throughout. That alone kills both
+     * left-then-right and right-then-left — a pair where either bud drives the same byte
+     * cannot be a pair of sides.
+     *
+     * Then, with the left bud out and left out, the frame changed from `01 00` to `00 01`
+     * ten seconds later — the same physical state, encoded the other way round. The order
+     * had moved while nothing physical had. The reading that fits both captures is that
+     * these are the primary and secondary buds, and the role passes between them; a bud
+     * leaving an ear is exactly when it would.
+     *
+     * So both states are decoded and **neither is attributed to a side**, because within
+     * this frame nothing can be. Per-side wear comes from the advertisement, which carries
+     * the primary flag and can therefore say which bud is which.
      */
     private fun decodeEarDetection(payload: ByteArray): AapEvent.EarDetection? {
         if (payload.size < 2) return null
         return AapEvent.EarDetection(
-            EarDetectionState(
-                left = wearState(payload[0].toInt() and 0xFF),
-                right = wearState(payload[1].toInt() and 0xFF),
-            ),
+            first = wearState(payload[0].toInt() and 0xFF),
+            second = wearState(payload[1].toInt() and 0xFF),
         )
     }
 

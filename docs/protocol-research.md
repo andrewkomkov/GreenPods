@@ -665,13 +665,72 @@ a table. Found by wearing one bud and reading the screen. Both now resolve throu
 same flag, and `EarDetectionState` is keyed by side rather than by role so a caller
 cannot reintroduce it.
 
-**Open question.** The AAP ear-detection payload (`04 00 04 00 06 00 xx yy`) carries two
-wear states and *neither* a component id nor a primary flag — unlike AAP battery, which
-labels its components explicitly. It is currently read in the same order the
-advertisement uses. That is the convention the accessory has been observed to follow and
-not something that has been measured; if it is wrong, the two sides are swapped whenever
-the reading comes from the channel rather than the air. Settling it takes one capture:
-open the channel, wear exactly one bud, and read which byte is `0x00`.
+**Settled — and neither way round was right. 2026-08-05.** The AAP ear-detection payload
+(`04 00 04 00 06 00 xx yy`) carries two bytes and *neither* a component id nor a primary
+flag — unlike AAP battery, which labels its components explicitly. It was read in the same
+order the advertisement uses, on the reasoning that the swap was the only thing that could
+be wrong. The measurement says otherwise.
+
+Pixel 8 (shiba), Android 17, AirPods Pro 3, live channel held by the monitoring session.
+Each bud taken out and put back, twice for the left and once for the right:
+
+| Time | Frame | What was physically true |
+|---|---|---|
+| 12:43:44 | `… 06 00 00 01` | left out of the ear |
+| 12:43:46 | `… 06 00 00 00` | left back in |
+| 12:43:49 | `… 06 00 00 01` | left out again |
+| 12:43:55 | `… 06 00 00 00` | left back in |
+| 12:58:21 | `… 06 00 00 00` | both in — baseline |
+| 12:58:57 | `… 06 00 00 01` | **right** out of the ear |
+| 12:59:04 | `… 06 00 00 00` | right back in |
+
+`payload[1]` moves for **either** bud, with `payload[0]` at `0x00` throughout. That alone
+rules out both left-then-right and right-then-left: a pair where either bud drives the same
+byte cannot be a pair of sides, and swapping them would have moved the fault rather than
+fixed it.
+
+**And the order is not even fixed.** A third capture, taken while verifying the fix, went
+further than the first two — it contradicted the conclusion they had suggested:
+
+| Time | Frame | What was physically true |
+|---|---|---|
+| 13:10:28 | `… 06 00 01 00` | left bud out of the ear |
+| 13:10:38 | `… 06 00 00 01` | left bud **still** out, untouched |
+
+Ten seconds apart, the same physical state, encoded the other way round — and `payload[0]`,
+written up moments earlier as a byte that "never moved", had moved. Nothing was touched
+between the two frames; the app's own dump reported `left: OUT_OF_EAR` across both.
+
+The reading that fits all three captures is that the two bytes are the **primary** and
+**secondary** bud, and the role passes between them — a bud leaving an ear being exactly
+the moment it would. That remains an inference, not a measurement: confirming it needs the
+advertisement's primary flag logged alongside these frames, so the flip can be seen on both
+sides at once. What is measured, and enough to act on, is that neither position is bound to
+a side.
+
+**A note on how this was nearly recorded wrong.** The first two captures agreed, and the
+conclusion drawn from them — "the second byte is the wear state, the first is unused" — was
+written into a decoder, a test and this file before the third capture existed. It was
+falsified twenty minutes later by ordinary use. Two agreeing observations of a role-ordered
+field look exactly like one fixed field; only a role change tells them apart, and nothing in
+the first two captures caused one.
+
+**Fixed.** `AapDecoder.decodeEarDetection` used to emit a per-side `EarDetectionState` from
+these two bytes, and `PodOverlay` folded it into pod state — where it overwrote the
+advertisement's side-resolved reading, so taking out the left bud made the app say the right
+one was out. This was the same defect `e3ac1ed` fixed on the advertisement path — reporting
+by role instead of by side — surviving on the AAP path, and it could not be fixed there by
+relabelling, because the side is not in the frame.
+
+The decoder now reports both states and attributes neither, and the merge point no longer
+lets them become per-side state; per-side wear comes from the advertisement alone, which
+carries the primary flag. Verified end to end on 2026-08-05: live channel held open,
+left bud removed, dump reports `wear: {left: OUT_OF_EAR, right: IN_EAR}`.
+
+Still worth having, and not built: the channel knows about a wear change immediately, while
+the advertisement arrives every couple of seconds. Using the frame as a prompt to trust the
+next advertisement sooner would keep that latency without inventing a side. It needs a way
+to say "something changed, ask again", which does not exist yet.
 
 ## Sources
 
