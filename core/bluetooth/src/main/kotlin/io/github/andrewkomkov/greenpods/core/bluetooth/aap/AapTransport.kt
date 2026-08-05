@@ -193,6 +193,40 @@ class AapTransport(
     private var socket: BluetoothSocket? = null
 
     /**
+     * Which service's report bodies must never reach the frame log.
+     *
+     * Null means "not yet known", and that withholds **every** report body rather than
+     * none: before the accessory has described itself there is no way to tell a heart
+     * rate from a head pose, and the safe reading of an unidentified sensor report is
+     * that it might be the one FR-023 is about. The session narrows this to the actual
+     * heart-rate service once the descriptors arrive.
+     */
+    private var sensitiveServiceIds: Set<Int>? = null
+
+    /**
+     * Tells the log which services carry measurements that may not be printed.
+     *
+     * Called by the session when the accessory announces its sensors. Passing an empty
+     * set is meaningful: it says the accessory described itself and has no heart-rate
+     * service, so nothing on this channel needs withholding.
+     */
+    fun restrictLoggingOf(serviceIds: Set<Int>) {
+        sensitiveServiceIds = serviceIds
+    }
+
+    /**
+     * Goes back to withholding every report body.
+     *
+     * A fresh channel has learned nothing about this accessory yet, and "no services are
+     * sensitive" is a very different claim from "which services are sensitive is not yet
+     * known". Collapsing the two would publish report bodies for the window between the
+     * channel opening and the accessory describing itself.
+     */
+    fun withholdAllReportBodies() {
+        sensitiveServiceIds = null
+    }
+
+    /**
      * Whether the channel is up and writable.
      *
      * [connect] returns a cold flow, so the socket does not exist until something starts
@@ -488,20 +522,17 @@ class AapTransport(
         // FR-023 says no heart rate appears in any diagnostic path, and this log is the
         // most diagnostic path there is — people paste it into bug reports. Its shape is
         // still recorded, so a report arriving is still visible; only the body is not.
-        if (isHidInputReport(packet)) {
+        //
+        // Scoped to the service that actually carries a measurement. Withholding *every*
+        // sensor report also hid head-tracking bodies, which carry no health data and are
+        // the only ground truth for where an orientation sits in a report — so the
+        // offsets they are read at could never be derived, only guessed at. Until the
+        // accessory has said which service is which, everything is withheld.
+        if (!FrameLogPolicy.mayPrintBody(packet, sensitiveServiceIds)) {
             Log.d(TAG, "$direction ${packet.size} bytes, HID input report (body withheld)")
             return
         }
         Log.d(TAG, "$direction ${packet.joinToString(" ") { "%02X".format(it) }}")
-    }
-
-    /** True for a `0x17` frame carrying protobuf field 7 — a sensor report. */
-    private fun isHidInputReport(packet: ByteArray): Boolean {
-        if (packet.size <= HID_BODY_OFFSET) return false
-        if (!packet.copyOfRange(0, 4).contentEquals(AapProtocol.HEADER)) return false
-        val opcode = (packet[4].toInt() and 0xFF) or ((packet[5].toInt() and 0xFF) shl 8)
-        if (opcode != Opcode.HEAD_TRACKING.value) return false
-        return HidDescriptorParser.hasInputReport(packet.copyOfRange(HID_BODY_OFFSET, packet.size))
     }
 
     private companion object {
@@ -532,8 +563,5 @@ class AapTransport(
 
         /** `BluetoothSocket.TYPE_L2CAP`, which is not public API. */
         const val L2CAP_TYPE = 3
-
-        /** Header, opcode and the `00 00 10 00 <length>` prefix a `0x17` frame carries. */
-        const val HID_BODY_OFFSET = 12
     }
 }

@@ -87,6 +87,22 @@ internal object AapFixtures {
         return HidTransport.frame(body)
     }
 
+    /**
+     * Four consecutive head-tracking frames spanning the sequence-counter varint boundary.
+     *
+     * One frame per line, in capture order: sequence 126, 127, 128, 129. The body grows a
+     * byte at 128 and the input report moves with it, which is the whole point of keeping
+     * them.
+     */
+    val headTrackingVarintBoundary: List<ByteArray> by lazy {
+        text("aap/head-tracking-varint-boundary.txt")
+            .lineSequence()
+            .map(String::trim)
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .map(::hex)
+            .toList()
+    }
+
     fun hex(text: String): ByteArray =
         text
             .split(Regex("\\s+"))

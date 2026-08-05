@@ -204,8 +204,8 @@ class AapDecoder(
      * an input report — and never on how long it is.
      */
     private fun decodeHid(packet: ByteArray): AapEvent? {
-        if (packet.size <= HID_BODY_OFFSET) return null
-        val body = packet.copyOfRange(HID_BODY_OFFSET, packet.size)
+        if (packet.size <= AapProtocol.HID_BODY_OFFSET) return null
+        val body = packet.copyOfRange(AapProtocol.HID_BODY_OFFSET, packet.size)
 
         HidDescriptorParser.services(body).takeIf { it.isNotEmpty() }?.let { discovered ->
             rememberServices(discovered)
@@ -262,7 +262,7 @@ class AapDecoder(
             serviceId == headTrackingServiceId ||
                 (headTrackingServiceId == null && packet.size >= HEAD_TRACKING_MIN_BYTES)
         if (isHeadTracking) {
-            return decodeHeadTracking(packet)
+            return decodeHeadTracking(report)
                 ?: AapEvent.UnhandledHidReport(serviceId, reportId, report.size, "head pose too short")
         }
 
@@ -412,34 +412,49 @@ class AapDecoder(
     }
 
     /**
-     * Head-tracking sample.
+     * Head-tracking sample, read from the **input report** rather than from the packet.
      *
-     * The offsets are absolute within the packet and are **unchanged** from before the
-     * `0x17` routing was fixed. That is deliberate: where a head pose sits inside its
-     * field-7 entry has never been captured, so re-deriving these offsets from the
-     * protobuf structure would be arithmetic on an assumption. What changed is only
-     * *which* frames reach here — input reports on the head-tracking service, rather
-     * than anything at all that happened to be 55 bytes long.
+     * The offsets used to be absolute within the packet, and that was wrong in a way that
+     * hid itself. The protobuf carries a sequence counter in field 1, and a varint takes
+     * one byte up to 127 and two from 128 — so everything after it, the report included,
+     * shifts by a byte partway through every stream, about five seconds in at 25 Hz.
+     * Measured on 2026-08-05: the report starts at packet offset 22 while the counter is
+     * 16..127 and at 23 from 128 onward, exactly at the boundary. A decoder reading
+     * packet offsets therefore read one pair of bytes for the first few seconds and a
+     * different, one-byte-shifted pair thereafter, for the same physical pose. Half of
+     * those reads straddled two values, which is where a 195° head tilt came from.
      *
-     * Re-deriving them properly needs one capture of a head-tracking frame alongside its
-     * descriptors; until then, leaving them alone is the honest option.
+     * Reading from the report removes the drift entirely: the protobuf says where the
+     * report begins, so nothing has to be assumed about what precedes it.
+     *
+     * The offsets **within** the report are still not derived, and are deliberately named
+     * `orientation1..3` rather than yaw, pitch and roll. The devmotion descriptor declares
+     * this report as an 8-byte timestamp followed by an opaque vendor blob (usage page
+     * `0xFF0C`) — it does **not** break out orientation fields, so there is no declared
+     * range or unit to read and no scale to derive from it. What is known is empirical:
+     * these three signed 16-bit values move with the head, they are where this decoder
+     * already read for most of a stream, and they are cross-coupled — nodding moves more
+     * than one of them. That last fact is why `HeadPoseMapper.SCALE` cannot be fixed by
+     * choosing a better constant: a per-axis linear scale is the wrong model for values
+     * that do not vary independently. See `docs/protocol-research.md` and
+     * `specs/004-head-tracking-calibration`.
      */
-    private fun decodeHeadTracking(packet: ByteArray): AapEvent? {
-        if (packet.size < HEAD_TRACKING_MIN_BYTES) return null
+    private fun decodeHeadTracking(report: ByteArray): AapEvent? {
+        if (report.size < HEAD_TRACKING_MIN_REPORT_BYTES) return null
 
         fun le16(offset: Int): Short =
             (
-                ((packet[offset + 1].toInt() and 0xFF) shl 8) or
-                    (packet[offset].toInt() and 0xFF)
+                ((report[offset + 1].toInt() and 0xFF) shl 8) or
+                    (report[offset].toInt() and 0xFF)
             ).toShort()
 
         return AapEvent.HeadTracking(
             HeadTrackingSample(
-                orientation1 = le16(43),
-                orientation2 = le16(45),
-                orientation3 = le16(47),
-                horizontalAcceleration = le16(51),
-                verticalAcceleration = le16(53),
+                orientation1 = le16(20),
+                orientation2 = le16(22),
+                orientation3 = le16(24),
+                horizontalAcceleration = le16(28),
+                verticalAcceleration = le16(30),
             ),
         )
     }
@@ -478,14 +493,20 @@ class AapDecoder(
         const val COMPONENT_LEFT = 0x04
         const val COMPONENT_CASE = 0x08
 
-        /** Header, opcode and the `00 00 10 00 <length>` prefix a `0x17` frame carries. */
-        const val HID_BODY_OFFSET = 12
-
         /**
          * The historical length rule, kept only as a fallback for frames that arrive
          * before the accessory has described its services. It is no longer the primary
          * test, and it no longer sees anything but input reports.
          */
         const val HEAD_TRACKING_MIN_BYTES = 55
+
+        /**
+         * The shortest report the head-pose fields fit in — the last one read ends at 31.
+         *
+         * Against the report, not the packet: what precedes the report is a varint whose
+         * width changes with the sequence counter, so a length test on the packet moves
+         * with it. Captured reports from AirPods Pro 3 are 58 bytes.
+         */
+        const val HEAD_TRACKING_MIN_REPORT_BYTES = 32
     }
 }

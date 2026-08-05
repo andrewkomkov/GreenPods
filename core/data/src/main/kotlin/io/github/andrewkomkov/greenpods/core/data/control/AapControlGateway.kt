@@ -122,7 +122,20 @@ class AapControlGateway(
             if (!session.awaitReady()) return@launch
             // Seed before announcing, so anything that reacts to the channel opening
             // already has the service ids this accessory gave us last time.
-            runCatching { session.restoreServices(serviceMemory.remembered(address)) }
+            //
+            // And *say* that it happened. Consumers learn which service is which from
+            // `AapEvent.HidServices` and from nothing else, so seeding the decoder
+            // silently left them waiting for an announcement that never comes: the
+            // accessory announces once per connection, and a channel that already knows
+            // has no reason to ask again. Measured on hardware 2026-08-05 — heart rate
+            // sat in STARTING with `service=none` indefinitely while the very same
+            // channel could list the heart-rate service on demand.
+            runCatching {
+                session.restoreServices(serviceMemory.remembered(address))
+                session.describedServices
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { restored -> repository.onAapEvent(address, AapEvent.HidServices(restored)) }
+            }
             repository.onAapChannelOpen(address)
         }
         return true
@@ -163,6 +176,16 @@ class AapControlGateway(
      * announcement happens once per connection or not at all.
      */
     suspend fun requestNotifications(): Boolean = session.requestNotifications()
+
+    /**
+     * What the accessory has said about its own sensor services, live or remembered.
+     *
+     * Read-only, and exposed because the descriptors are the ground truth for every
+     * offset and every scale this app reads out of a sensor report. When a decoded value
+     * looks wrong, the question is always whether the descriptor says something different
+     * from what the decoder assumed, and that is unanswerable without seeing it.
+     */
+    val describedServices: List<HidService> get() = session.describedServices
 
     fun disconnect() {
         readerJob?.cancel()

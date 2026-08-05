@@ -1,0 +1,30 @@
+# Four consecutive head-tracking frames across the sequence-counter varint boundary,
+# VERBATIM.
+#
+# Source: AirPods Pro 3, firmware 81.2675…, Pixel 8 / Android 17, 2026-08-05, devmotion
+# service 0x10 streaming at 25 Hz over a live AAP channel.
+#
+# These exist to pin one thing: the protobuf sequence counter in field 1 is a varint, so
+# it occupies one byte up to 127 and two bytes from 128. Everything after it — including
+# the input report — therefore shifts by a byte partway through every stream, about five
+# seconds in at 25 Hz.
+#
+#   seq 127: `08 7F`       body length 0x44, report starts at packet offset 22
+#   seq 128: `08 80 01`    body length 0x45, report starts at packet offset 23
+#
+# A decoder reading absolute packet offsets reads a different pair of bytes before and
+# after that moment for the same physical head pose. Do not edit these to make a test
+# pass: they came off the accessory, and the only legitimate change is a re-capture with
+# the source recorded (Principle III).
+
+# seq 126 — report at packet offset 22
+04 00 04 00 17 00 00 00 10 00 44 00 08 7E 10 03 3A 3E 08 10 1A 3A 01 A0 49 73 6E 66 3C 00 00 03 04 43 4A 26 E4 86 00 00 00 00 0C 91 62 EF 6E DB 03 00 0C 00 0B 00 1B 83 03 F7 4D F9 F4 FF 0E 00 06 00 98 FD 6D 02 2E 02 FE FE 78 39 71 03 00 00
+
+# seq 127 — report at packet offset 22, the last frame before the varint grows
+04 00 04 00 17 00 00 00 10 00 44 00 08 7F 10 03 3A 3E 08 10 1A 3A 01 48 76 D8 70 66 3C 00 00 03 04 43 43 C3 E4 86 00 00 00 00 0E 91 74 EF 6E DB 05 00 00 00 14 00 1B 83 03 F7 4D F9 F7 FF 0C 00 04 00 98 FD 6D 02 2E 02 AE 40 76 39 79 03 00 00
+
+# seq 128 — report at packet offset 23, one byte later for the same kind of frame
+04 00 04 00 17 00 00 00 10 00 45 00 08 80 01 10 03 3A 3E 08 10 1A 3A 01 F0 A2 3D 73 66 3C 00 00 03 04 43 3C 60 E5 86 00 00 00 00 0C 91 87 EF 79 DB 00 00 FA FF 0E 00 1C 83 03 F7 4D F9 F9 FF 08 00 03 00 98 FD 6D 02 2E 02 89 4A 65 39 81 03 00 00
+
+# seq 129 — report at packet offset 23
+04 00 04 00 17 00 00 00 10 00 45 00 08 81 01 10 03 3A 3E 08 10 1A 3A 01 B0 CB A2 75 66 3C 00 00 03 04 43 34 FD E5 86 00 00 00 00 08 91 8D EF 84 DB FD FF F7 FF 00 00 1C 83 03 F7 4D F9 FD FF 06 00 03 00 98 FD 6D 02 2D 02 75 7C 5C 39 89 03 00 00
