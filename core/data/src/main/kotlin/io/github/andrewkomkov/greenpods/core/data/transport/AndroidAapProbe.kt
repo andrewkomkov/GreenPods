@@ -58,6 +58,21 @@ class AndroidAapProbe(
                 ProbeOutcome.Ambiguous(resolution.candidates)
             }
 
+            // The accessory is paired but its name no longer says what it is, so this
+            // advertisement was never claimed for the bond and there is no classic address
+            // to open a channel to. Recorded with the cause, because "renaming your earbuds
+            // costs you the Apple protocol" is not something anyone would guess.
+            is BondedPodResolver.Resolution.Uncorroborated -> {
+                diagnostics.record(
+                    DiagnosticCategory.TRANSPORT,
+                    "Cannot tell whether $address is the paired ${resolution.bondedName}",
+                    "The paired accessory's name belongs to no known product family, which " +
+                        "is what renaming does. Advertisement-only features keep working; " +
+                        "the channel needs a name the model can be read from.",
+                )
+                ProbeOutcome.NoPairedDevice
+            }
+
             BondedPodResolver.Resolution.Unavailable -> {
                 ProbeOutcome.Unavailable
             }

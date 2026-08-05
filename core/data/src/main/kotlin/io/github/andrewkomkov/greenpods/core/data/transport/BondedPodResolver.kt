@@ -5,7 +5,7 @@ import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Context
-import io.github.andrewkomkov.greenpods.core.model.AppleAccessoryFamily
+import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapProtocol
 import io.github.andrewkomkov.greenpods.core.model.PodModel
 
 /**
@@ -34,11 +34,16 @@ import io.github.andrewkomkov.greenpods.core.model.PodModel
  * against the stranger's entry. Same model as yours and it would have been worse — one
  * entry, silently carrying someone else's battery and wear.
  *
- * So a candidate must now be corroborated by [AppleAccessoryFamily]: the advertised model
- * and the bonded device's name have to belong to the same product family. That does not
- * identify anything — two people with the same AirPods Pro remain indistinguishable, which
- * is exactly what a private address is for — but it rules out the case that actually
- * happens, at no cost and with no new permission.
+ * So a candidate must now be corroborated: the advertised model and the bonded device's
+ * name have to belong to the same product family. That does not identify anything — two
+ * people with the same AirPods Pro remain indistinguishable, which is exactly what a
+ * private address is for — but it rules out the case that actually happens, at no cost and
+ * with no new permission.
+ *
+ * Corroboration reads a name, and names are the user's to change, so [BondedPodMatch]
+ * separates "not yours" from "cannot tell" and this class carries the second as
+ * [Resolution.Uncorroborated]. A renamed accessory is recognised as Apple at all through
+ * its SDP record rather than its name — see [looksLikeAppleAudio].
  */
 class BondedPodResolver(
     private val context: Context,
@@ -63,6 +68,19 @@ class BondedPodResolver(
         data class NotThisAccessory(
             val bondedName: String,
             val advertisedModel: String,
+        ) : Resolution
+
+        /**
+         * A paired accessory exists whose name says nothing about what it is, so this
+         * advertisement can be neither confirmed nor excluded.
+         *
+         * Renaming is the ordinary cause, and it is not exotic — the Bluetooth settings
+         * screen invites it. Distinguished from [NotThisAccessory] because the two demand
+         * opposite handling: that one is grounds to discard the advertisement, this one is
+         * grounds to keep it and claim nothing.
+         */
+        data class Uncorroborated(
+            val bondedName: String,
         ) : Resolution
 
         /** Bluetooth is off, or the Connect permission is missing. */
@@ -98,31 +116,31 @@ class BondedPodResolver(
         if (candidates.isEmpty()) return Resolution.NoCandidate
         if (advertisedModel == null) return Resolution.NoCandidate
 
-        val plausible =
-            candidates.filter { AppleAccessoryFamily.couldBeTheSame(it.name, advertisedModel.displayName) }
+        val names = candidates.map { runCatching { it.name }.getOrNull() }
+        return when (val verdict = BondedPodMatch.of(names, advertisedModel)) {
+            is BondedPodMatch.Verdict.Resolved -> {
+                Resolution.Resolved(candidates[verdict.index])
+            }
 
-        return when (plausible.size) {
-            0 -> {
+            BondedPodMatch.Verdict.NotThisAccessory -> {
                 Resolution.NotThisAccessory(
-                    bondedName =
-                        candidates
-                            .first()
-                            .name
-                            .orEmpty()
-                            .ifBlank { candidates.first().address },
+                    bondedName = candidates.first().label(),
                     advertisedModel = advertisedModel.displayName,
                 )
             }
 
-            1 -> {
-                Resolution.Resolved(plausible.single())
+            BondedPodMatch.Verdict.Uncorroborated -> {
+                Resolution.Uncorroborated(bondedName = candidates.first().label())
             }
 
-            else -> {
-                Resolution.Ambiguous(plausible.map { it.name.orEmpty().ifBlank { it.address } })
+            is BondedPodMatch.Verdict.Ambiguous -> {
+                Resolution.Ambiguous(verdict.indices.map { candidates[it].label() })
             }
         }
     }
+
+    @SuppressLint("MissingPermission")
+    private fun BluetoothDevice.label(): String = runCatching { name }.getOrNull().orEmpty().ifBlank { address }
 
     /**
      * Whether this bonded device is plausibly the accessory GreenPods is about.
@@ -141,21 +159,44 @@ class BondedPodResolver(
     /**
      * A paired device that plausibly *is* the advertising accessory.
      *
-     * Name matching is unlovely, but it is what is available: the Bluetooth class says
-     * only "audio", and the manufacturer metadata needs a privileged permission. Apple
-     * accessories keep their model name unless deliberately renamed, and a rename that
-     * drops every known prefix simply falls back to the honest "no candidate" answer.
+     * Two independent signals, because the obvious one does not survive ordinary use. The
+     * name carries the model when the accessory still has the one Apple shipped, and the
+     * Bluetooth settings screen invites renaming it — after which nothing in the name says
+     * Apple at all. Recognising only by name meant a renamed accessory was not a candidate,
+     * and once foreign advertisements began being discarded that made the owner's own
+     * earbuds vanish from the app.
+     *
+     * The SDP record does survive renaming. An accessory that speaks Apple's protocol
+     * publishes [AapProtocol.SERVICE_UUID] whatever its owner has called it, and no
+     * non-Apple headphones publish it — which is exactly the discrimination that
+     * "any bonded audio device" would have thrown away, on a phone that is typically
+     * paired to a speaker, a car and two other headsets.
      */
     @SuppressLint("MissingPermission")
     private fun BluetoothDevice.looksLikeAppleAudio(): Boolean {
         val isAudio = bluetoothClass?.majorDeviceClass == BluetoothClass.Device.Major.AUDIO_VIDEO
         if (!isAudio) return false
+        if (publishesAppleService()) return true
         val name = runCatching { name }.getOrNull().orEmpty()
         return APPLE_NAME_PREFIXES.any { prefix -> name.startsWith(prefix, ignoreCase = true) }
     }
 
+    /** Whether the bond's SDP record carries Apple's AAP service. Survives renaming. */
+    @SuppressLint("MissingPermission")
+    private fun BluetoothDevice.publishesAppleService(): Boolean =
+        runCatching { uuids }
+            .getOrNull()
+            .orEmpty()
+            .any { it?.uuid?.toString().equals(AapProtocol.SERVICE_UUID, ignoreCase = true) }
+
     private companion object {
-        /** Default names Apple and Beats ship; a renamed accessory is not guessed at. */
+        /**
+         * Default names Apple and Beats ship.
+         *
+         * Kept alongside the service-UUID check rather than replaced by it: the SDP record
+         * is only populated once the phone has completed discovery with the accessory, and
+         * a freshly restored bond may not have it yet.
+         */
         val APPLE_NAME_PREFIXES = listOf("AirPods", "Beats", "Powerbeats")
     }
 }

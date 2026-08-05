@@ -413,7 +413,8 @@ class AapTransport(
      *
      * The signature has been reshuffled repeatedly across releases, so all known forms
      * are tried in order of how recent they are. The constant part is the arguments:
-     * type 3 (L2CAP), auth `true`, encrypt `true`, PSM `0x1001`, and [APPLE_AAP_UUID].
+     * type 3 (L2CAP), auth `true`, encrypt `true`, PSM `0x1001`, and
+     * [AapProtocol.SERVICE_UUID].
      */
     private fun secureL2capSocket(device: BluetoothDevice): BluetoothSocket {
         // Without this the constructor lookup below fails with NoSuchMethodException even
@@ -424,7 +425,7 @@ class AapTransport(
             throw NoSuchMethodException("android.bluetooth is not reflectable: $access")
         }
 
-        val uuid = ParcelUuid.fromString(APPLE_AAP_UUID)
+        val uuid = ParcelUuid.fromString(AapProtocol.SERVICE_UUID)
         val psm = AapProtocol.PSM
         val candidates: List<Pair<String, Array<Any>>> =
             buildList {
@@ -534,13 +535,5 @@ class AapTransport(
 
         /** Header, opcode and the `00 00 10 00 <length>` prefix a `0x17` frame carries. */
         const val HID_BODY_OFFSET = 12
-
-        /**
-         * Apple's AAP service UUID, as advertised in the accessory's SDP record.
-         *
-         * The socket carries it so the stack requests the right service rather than a
-         * bare PSM.
-         */
-        const val APPLE_AAP_UUID = "74ec2172-0bad-4d01-8f77-997b2be0722a"
     }
 }

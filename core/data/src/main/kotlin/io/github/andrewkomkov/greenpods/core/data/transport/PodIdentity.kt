@@ -103,11 +103,15 @@ class BondedPodIdentity(
                     // can be this phone's accessory either.
                     BondedPodResolver.Resolution.NoCandidate -> null
 
-                    // Several paired accessories could match, or the stack could not be
-                    // asked. Both are "cannot tell", and excluding on a cannot-tell would
-                    // hide the owner's own earbuds. Keep them under the advertised address,
-                    // which is Principle II — visible with what the advertisement supports.
+                    // Several paired accessories could match, the paired one has a name that
+                    // says nothing about what it is, or the stack could not be asked. All
+                    // three are "cannot tell", and excluding on a cannot-tell would hide the
+                    // owner's own earbuds — which is precisely what renaming them used to
+                    // do. Keep them under the advertised address, which is Principle II:
+                    // visible with what the advertisement alone supports.
                     is BondedPodResolver.Resolution.Ambiguous -> advertisedAddress
+
+                    is BondedPodResolver.Resolution.Uncorroborated -> advertisedAddress
 
                     BondedPodResolver.Resolution.Unavailable -> advertisedAddress
                 }

@@ -22,6 +22,16 @@ object AapProtocol {
     /** L2CAP Protocol/Service Multiplexer that AAP listens on. */
     const val PSM = 0x1001
 
+    /**
+     * Apple's AAP service UUID, as it appears in the accessory's SDP record.
+     *
+     * Two things use it, for unrelated reasons. The socket carries it so the stack
+     * requests the right service rather than a bare PSM. And because a bonded device's
+     * SDP record survives renaming, its presence is the one way to recognise an Apple
+     * accessory that the user has given a name of their own — see `BondedPodResolver`.
+     */
+    const val SERVICE_UUID = "74ec2172-0bad-4d01-8f77-997b2be0722a"
+
     /** Standard 4-byte prefix on every AAP packet. */
     val HEADER = byteArrayOf(0x04, 0x00, 0x04, 0x00)
 
