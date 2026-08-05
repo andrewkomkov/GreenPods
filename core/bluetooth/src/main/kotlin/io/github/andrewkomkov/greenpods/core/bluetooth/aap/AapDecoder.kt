@@ -282,12 +282,30 @@ class AapDecoder(
         rememberServices(remembered)
     }
 
+    /**
+     * Merges an announcement into what this link has already described.
+     *
+     * **Not a replacement.** AirPods Pro 3 describe themselves in more than one frame —
+     * one carrying `SPL0`, `HostLibHID` and the heart-rate service, another carrying
+     * `devmotion6` alone — and treating each frame as the complete set means whichever
+     * arrived last is the only one this decoder can see. That silently cost head tracking
+     * its service id, and heart rate would have lost its own on any firmware that happened
+     * to order the frames the other way.
+     *
+     * Newest wins per id, so a service that redescribes itself still updates. The whole
+     * map is cleared in [reset] when the link goes, so nothing survives into a session
+     * where it might no longer be true.
+     */
     private fun rememberServices(discovered: List<HidService>) {
-        services = discovered
-        heartRateServiceId = discovered.firstOrNull { it.isHeartRate }?.id
-        headTrackingServiceId = discovered.firstOrNull { it.isHeadTracking }?.id
+        val merged = LinkedHashMap<Int, HidService>()
+        services.forEach { merged[it.id] = it }
+        discovered.forEach { merged[it.id] = it }
+        services = merged.values.toList()
+
+        heartRateServiceId = services.firstOrNull { it.isHeartRate }?.id
+        headTrackingServiceId = services.firstOrNull { it.isHeadTracking }?.id
         heartRateDecoder =
-            discovered
+            services
                 .firstOrNull { it.isHeartRate }
                 ?.layout
                 ?.let(::HeartRateReportDecoder)

@@ -1,6 +1,7 @@
 package io.github.andrewkomkov.greenpods.core.bluetooth.aap
 
 import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.Test
 
@@ -40,6 +41,22 @@ class HidDescriptorLiveCaptureTest {
         HidDescriptorParser.services(body(descriptorFrames[0])).map(HidService::id) shouldContainExactly listOf(0x10)
         HidDescriptorParser.services(body(descriptorFrames[1])).map(HidService::id) shouldContainExactly
             listOf(0x11, 0x12, 0x13)
+    }
+
+    @Test
+    fun `the decoder keeps both frames' services, not only the last one`() {
+        // The bug this pins was invisible until head tracking asked for its service id.
+        // `rememberServices` replaced its list on every announcement, so after the second
+        // frame the decoder knew 0x11, 0x12 and 0x13 and had forgotten 0x10 — head
+        // tracking could not be started, and heart rate would have gone the same way on
+        // any firmware that sent the two frames in the other order. The file above says
+        // as much in prose; nothing was checking the decoder against it.
+        val decoder = AapDecoder()
+
+        descriptorFrames.forEach(decoder::decode)
+
+        decoder.heartRateFeatureReportId.shouldNotBeNull()
+        decoder.headTrackingFeatureReportId.shouldNotBeNull()
     }
 
     @Test

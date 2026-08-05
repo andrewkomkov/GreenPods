@@ -6,6 +6,7 @@ import android.content.Context
 import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapEvent
 import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapSession
 import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapTransport
+import io.github.andrewkomkov.greenpods.core.bluetooth.aap.HidService
 import io.github.andrewkomkov.greenpods.core.data.PodRepository
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
@@ -66,8 +67,27 @@ class AapControlGateway(
         val device = (resolution as? BondedPodResolver.Resolution.Resolved)?.device ?: return false
 
         connectedAddress = address
+
+        // Everything this accessory has ever said about itself, keyed by service id.
+        //
+        // Seeded from memory and updated as frames arrive, because the announcement is
+        // neither atomic nor repeated: AirPods Pro 3 describe `devmotion6` in one frame
+        // and their other three services in another, and a link may re-announce only
+        // some of them. Persisting each frame as the complete set — or even each link's
+        // accumulation as the complete set — drops whatever that link did not happen to
+        // mention. That is what silently cost head tracking its service id while heart
+        // rate kept working, purely because heart rate's service was in the frame that
+        // arrived last.
+        //
+        // A live frame still outranks memory, but per service rather than wholesale.
+        val announced = linkedMapOf<Int, HidService>()
+
         readerJob =
             scope.launch {
+                runCatching { serviceMemory.remembered(address) }
+                    .getOrDefault(emptyList())
+                    .forEach { announced[it.id] = it }
+
                 session
                     .events(device)
                     .catch { error ->
@@ -81,9 +101,11 @@ class AapControlGateway(
                         repository.onAapChannelClosed(address, cause?.message ?: "channel ended")
                     }.collect { event ->
                         // A live announcement replaces whatever was remembered — the
-                        // accessory's current word about itself always wins.
+                        // accessory's current word about itself always wins — but it is
+                        // *this link's* whole word, accumulated, not the last frame of it.
                         if (event is AapEvent.HidServices) {
-                            runCatching { serviceMemory.remember(address, event.services) }
+                            event.services.forEach { announced[it.id] = it }
+                            runCatching { serviceMemory.remember(address, announced.values.toList()) }
                         }
                         repository.onAapEvent(address, event)
                     }

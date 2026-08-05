@@ -51,6 +51,7 @@ object GreenPodsViewModels {
                             repository = app.podRepository,
                             gateway = app.controlGateway,
                             serviceMemory = app.hidServiceMemory,
+                            diagnostics = app.diagnostics,
                             scope = app.applicationScope,
                         ),
                 )

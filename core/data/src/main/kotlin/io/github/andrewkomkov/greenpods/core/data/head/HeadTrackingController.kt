@@ -6,6 +6,8 @@ import io.github.andrewkomkov.greenpods.core.bluetooth.head.HeadGestureDetector
 import io.github.andrewkomkov.greenpods.core.bluetooth.head.HeadPoseMapper
 import io.github.andrewkomkov.greenpods.core.data.PodRepository
 import io.github.andrewkomkov.greenpods.core.data.control.PodControlGateway
+import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
+import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.transport.HidServiceMemory
 import io.github.andrewkomkov.greenpods.core.model.HeadGestureEvent
 import io.github.andrewkomkov.greenpods.core.model.HeadPose
@@ -39,6 +41,7 @@ class HeadTrackingController(
     private val repository: PodRepository,
     private val gateway: PodControlGateway,
     private val serviceMemory: HidServiceMemory,
+    private val diagnostics: DiagnosticsLog = DiagnosticsLog(),
     /**
      * Outlives the screen on purpose.
      *
@@ -86,12 +89,26 @@ class HeadTrackingController(
             if (PodFeature.HEAD_TRACKING !in pod.model.features) throw NotStreaming(Refusal.UNSUPPORTED)
             if (PodFeature.HEAD_TRACKING !in pod.usableFeatures) throw NotStreaming(Refusal.UNAVAILABLE)
 
+            // Recorded rather than merely refused. "Head tracking is unavailable" has
+            // three quite different causes here — the accessory never described itself,
+            // it described no motion service, or it described one without an interval
+            // report to write — and on screen they are one sentence. The log is where
+            // they stay distinguishable.
+            val known = serviceMemory.remembered(pod.address)
             val serviceId =
-                serviceMemory
-                    .remembered(pod.address)
-                    .firstOrNull { it.isHeadTracking }
-                    ?.id
-                    ?: throw NotStreaming(Refusal.UNAVAILABLE)
+                known.firstOrNull { it.isHeadTracking }?.id
+                    ?: run {
+                        diagnostics.record(
+                            DiagnosticCategory.TRANSPORT,
+                            "Head tracking: no motion service for ${pod.address}",
+                            if (known.isEmpty()) {
+                                "The accessory has not described its services on this link."
+                            } else {
+                                "Described: " + known.joinToString { "0x%02X %s".format(it.id, it.name ?: "unnamed") }
+                            },
+                        )
+                        throw NotStreaming(Refusal.UNAVAILABLE)
+                    }
 
             val started =
                 gateway.startHeadTracking(
@@ -99,7 +116,15 @@ class HeadTrackingController(
                     serviceId = serviceId,
                     intervalMicros = HidTransport.intervalMicros(intervalMillis),
                 )
-            if (!started) throw NotStreaming(Refusal.UNAVAILABLE)
+            if (!started) {
+                diagnostics.record(
+                    DiagnosticCategory.TRANSPORT,
+                    "Head tracking: service 0x%02X would not start".format(serviceId),
+                    "The write was refused or the service describes no report-interval " +
+                        "feature report. Nothing is guessed in its place.",
+                )
+                throw NotStreaming(Refusal.UNAVAILABLE)
+            }
 
             // A fresh detector per session: its history is a few hundred milliseconds of
             // movement, and carrying yesterday's across a screen entry would let a
