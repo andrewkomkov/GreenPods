@@ -476,9 +476,70 @@ Nothing about this is blocked — it simply has not been done yet.
 
 ## Head tracking
 
-Fully solved and portable. `Opcode.HEAD_TRACKING` (`0x0017`) starts and stops the
-stream; samples carry three orientation values and two acceleration values at the
-byte offsets in `HeadTrackingSample`. Gated behind L2CAP like all other writes.
+**Started and stopped, decoded only in part.** `Opcode.HEAD_TRACKING` (`0x0017`) carries
+the devmotion service; interval `0x9C40` (40 ms, 25 Hz) starts it and interval 0 stops it,
+the same mechanism heart rate uses. Gated behind L2CAP like all other writes.
+
+What arrives is an input report on service `0x10`, 58 bytes, report id 1, at 25 Hz —
+measured on AirPods Pro 3, 2026-08-05.
+
+### The report offsets were read from the wrong place — fixed 2026-08-05
+
+The decoder used to read the pose at **absolute packet offsets** 43/45/47. Those offsets
+do not hold still. The `0x17` body is protobuf, field 1 is a sequence counter, and a
+varint takes one byte up to 127 and two from 128 — so the input report, and everything
+else after that field, shifts a byte partway through every stream. At 25 Hz that is about
+five seconds in.
+
+Measured, on one capture:
+
+| Sequence | Report starts at packet offset |
+|---|---|
+| 16 – 127 | 22 |
+| 128 – 316 | 23 |
+
+The boundary lands exactly at 127 → 128. So the shipped decoder read one pair of bytes
+for the first few seconds of a stream and a different, one-byte-shifted pair thereafter,
+for the same physical pose — and half of those reads straddled two adjacent values, which
+is where an impossible 195° of tilt came from.
+
+The fix is to read from the input report the protobuf delimits, not from the packet.
+Pinned by `HeadTrackingOffsetTest` against four consecutive captured frames spanning the
+boundary, in `head-tracking-varint-boundary.txt`.
+
+### The scale is still not derived, and cannot be read off the descriptor
+
+The devmotion descriptor (96 bytes, service `0x10`, name `devmotion6`) declares report 1
+as an 8-byte timestamp on usage `FF15:0004` — the same timestamp usage the heart-rate
+service uses — followed by an **opaque vendor blob** on usage page `FF0C`. It breaks out
+no orientation fields, so there is no Logical/Physical range and no unit to read: the
+accessory does not say what its motion numbers mean.
+
+`HidReportDescriptor` now parses Logical/Physical Minimum and Maximum and the Unit
+Exponent, so a descriptor that *does* declare a scale can be honoured. This one does not.
+
+What is known about the three values at report offsets 20/22/24 is empirical:
+
+- They are signed 16-bit, little-endian, and they move with the head.
+- They are where the decoder already read for most of a stream, so this is not a new
+  guess replacing an old one — it is the same bytes, read where they actually are.
+- **They are cross-coupled.** Over a scripted capture — nod, then shake, then tilt,
+  separated by stillness — nodding moved offsets 24 and 22; shaking moved 22 most; tilting
+  moved 24 and 20. No offset belongs to one axis.
+
+That last point is why `HeadPoseMapper.SCALE` cannot be repaired by choosing a better
+constant: a per-axis linear scale is the wrong model for values that do not vary
+independently. A quaternion was the obvious hypothesis and it was tested — four
+consecutive int16 at offsets 26/28/30/32 do hold a near-constant norm (0.9695, spread
+0.18%), but converting them to Euler angles does not make nodding move pitch or shaking
+move yaw, so that is not the head's orientation either.
+
+Everything the app shows in degrees, and every gesture threshold, therefore still rests on
+a number known to be wrong. `specs/004-head-tracking-calibration` is the way out and is
+still unbuilt.
+
+Deriving offsets 43/45/47 was listed as an open question; it is now closed as *the
+question was malformed* — they were packet offsets for a report whose position moves.
 
 ## Settings that persist in the accessory
 
@@ -509,6 +570,34 @@ join, and are explicitly out of scope:
 ## Field notes
 
 Things learned by running GreenPods on real hardware, as opposed to from captures.
+
+### Remembered services never reached the features that needed them — 2026-08-05
+
+Heart rate sat in `STARTING` with `service=none` indefinitely on a phone where the very
+same channel could list the heart-rate service on demand. Three minutes of polling, no
+state change, `reportsReceived: 0`.
+
+The accessory announces its HID services **once per Bluetooth link**, in answer to the
+first request after the link comes up. `HidServiceMemory` exists precisely because of
+that, and `AapControlGateway` seeded the decoder from it on every channel open — but
+silently. Every consumer learns which service is which from `AapEvent.HidServices` and
+from nothing else, so seeding the decoder without emitting that event left the
+heart-rate controller waiting for an announcement that a remembered channel has no
+reason to make.
+
+The failure is invisible from either side. The decoder knows the service. The controller
+does not. Nothing errors, and `hid` reports the service correctly the whole time — which
+is what makes it worth writing down: "the app knows X" and "the part of the app that
+needs X knows X" are different claims, and remembering something is only discovery if
+you also say it out loud.
+
+Fixed by emitting `AapEvent.HidServices` for restored services, exactly as a live
+announcement would. Verified on hardware the same day: `state=MEASURING service=0x13
+interval=1000ms reports=116 trusted=112 discarded=0`, steady at 1 Hz.
+
+**Still open, found while verifying that:** `hr off` answers `disabled` and reports
+genuinely cease, but the published state stays `MEASURING enabled=true` with
+`lastStop=none`. The sensor stops; the state lies about it. Not diagnosed.
 
 ### Pixel 8, AirPods Pro 3 — heart rate end to end — 2026-08-04
 
@@ -703,10 +792,41 @@ between the two frames; the app's own dump reported `left: OUT_OF_EAR` across bo
 
 The reading that fits all three captures is that the two bytes are the **primary** and
 **secondary** bud, and the role passes between them — a bud leaving an ear being exactly
-the moment it would. That remains an inference, not a measurement: confirming it needs the
-advertisement's primary flag logged alongside these frames, so the flip can be seen on both
-sides at once. What is measured, and enough to act on, is that neither position is bound to
-a side.
+the moment it would.
+
+**Confirmed, with the advertisement alongside. 2026-08-05, later the same day.** The
+measurement the paragraph above asked for: each bud removed in turn while the app's dump
+was polled, so the side is known independently of the frame.
+
+| Advertisement says | AAP frame |
+|---|---|
+| `left: OUT_OF_EAR, right: IN_EAR` | `01 00`, then `00 01` |
+| `left: IN_EAR, right: OUT_OF_EAR` | `01 00`, then `00 01` |
+
+Two full alternating cycles, 21 frames, show one pattern and no exceptions:
+
+```
+00 00   both in the ears
+01 00   a bud comes out — either bud
+00 01   ~0.9 s later, untouched
+00 01   held
+00 00   put back
+```
+
+The flip is not drift and not a race: it happened after **every** removal, on both sides,
+0.85–0.95 s later. That is a role handover with a settling time, and it fits the frame
+exactly — the bud that leaves is still primary at the instant it leaves (`01 00`, primary
+out), the role then passes to the bud still in an ear, and the removed bud is thereafter
+the secondary one (`00 01`).
+
+So: **`payload[0]` is the primary bud's wear and `payload[1]` the secondary's**, and which
+bud holds which role changes about a second after a bud is removed. Neither position is
+bound to a side, and no amount of relabelling would bind it.
+
+This also explains why the earlier captures disagreed: they sampled at different points
+either side of that ~0.9 s handover. A single frame taken shortly after a removal and a
+single frame taken a few seconds later encode the same physical state oppositely, which is
+precisely what the 13:10:28 / 13:10:38 pair showed.
 
 **A note on how this was nearly recorded wrong.** The first two captures agreed, and the
 conclusion drawn from them — "the second byte is the wear state, the first is unused" — was
