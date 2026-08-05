@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/andrewkomkov/GreenPods/compare/v0.3.0...v0.3.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* make heart rate start, and stop reading the head pose from a moving offset ([#6](https://github.com/andrewkomkov/GreenPods/issues/6)) ([1d76635](https://github.com/andrewkomkov/GreenPods/commit/1d76635a0e41f3612b2e271919af31ec370490f5))
+
 ## [0.3.0](https://github.com/andrewkomkov/GreenPods/compare/v0.2.1...v0.3.0) (2026-08-05)
 
 
