@@ -307,7 +307,7 @@ class PodRepositoryTest {
             val repository =
                 repository(
                     source = FakeSource(sightings),
-                    identity = PodIdentity { BONDED },
+                    identity = PodIdentity { _, _ -> BONDED },
                 )
 
             repository.pods.test {
@@ -357,7 +357,7 @@ class PodRepositoryTest {
             val repository =
                 repository(
                     source = FakeSource(sightings),
-                    identity = PodIdentity { BONDED },
+                    identity = PodIdentity { _, _ -> BONDED },
                 )
 
             repository.pods.test {

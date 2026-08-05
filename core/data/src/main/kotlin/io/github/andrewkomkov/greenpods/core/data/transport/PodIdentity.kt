@@ -1,5 +1,7 @@
 package io.github.andrewkomkov.greenpods.core.data.transport
 
+import io.github.andrewkomkov.greenpods.core.model.PodModel
+
 /**
  * What an accessory is called, for as long as it is the same accessory.
  *
@@ -26,8 +28,15 @@ fun interface PodIdentity {
      * Must be cheap: this is called for **every** advertisement, several times a second
      * per accessory. Implementations that consult the Bluetooth stack are expected to
      * memoise — see [BondedPodIdentity].
+     *
+     * [model] is what the advertisement announced, and it is not optional decoration: it
+     * is the only per-advertisement signal that can tell a stranger's AirPods from the
+     * ones this phone is paired to. Null means unknown, and unknown resolves to nothing.
      */
-    fun stableKey(advertisedAddress: String): String
+    fun stableKey(
+        advertisedAddress: String,
+        model: PodModel?,
+    ): String
 
     companion object {
         /**
@@ -37,7 +46,7 @@ fun interface PodIdentity {
          * use, and pretending otherwise would invent an identity rather than find one.
          * Also what the tests use, so they are not asserting against a Bluetooth stack.
          */
-        val Advertised = PodIdentity { it }
+        val Advertised = PodIdentity { address, _ -> address }
     }
 }
 
@@ -55,16 +64,28 @@ fun interface PodIdentity {
 class BondedPodIdentity(
     private val resolver: BondedPodResolver,
 ) : PodIdentity {
-    private val resolved = mutableMapOf<String, String>()
+    /**
+     * Keyed by address **and** model, because the answer depends on both.
+     *
+     * Caching on the address alone would let the first advertisement seen from a rotating
+     * address fix the answer for every later one — including a rotation that has since
+     * been reused by a different accessory.
+     */
+    private val resolved = mutableMapOf<Pair<String, PodModel?>, String>()
 
-    override fun stableKey(advertisedAddress: String): String =
+    override fun stableKey(
+        advertisedAddress: String,
+        model: PodModel?,
+    ): String =
         synchronized(resolved) {
-            resolved.getOrPut(advertisedAddress) {
-                // Unresolvable means unresolvable — an accessory that is not paired, or
-                // one of several that a private address cannot choose between. Falling
-                // back to the advertised address keeps such a device visible with the
-                // features the advertisement alone can support, which is Principle II.
-                (resolver.resolve(advertisedAddress) as? BondedPodResolver.Resolution.Resolved)
+            resolved.getOrPut(advertisedAddress to model) {
+                // Unresolvable means unresolvable — an accessory that is not paired, one of
+                // several that a private address cannot choose between, or one whose model
+                // says it is somebody else's. Falling back to the advertised address keeps
+                // such a device visible with the features the advertisement alone can
+                // support, which is Principle II, and keeps it out of this phone's bond,
+                // which is what stops it overwriting the owner's accessory.
+                (resolver.resolve(advertisedAddress, model) as? BondedPodResolver.Resolution.Resolved)
                     ?.device
                     ?.address
                     ?: advertisedAddress

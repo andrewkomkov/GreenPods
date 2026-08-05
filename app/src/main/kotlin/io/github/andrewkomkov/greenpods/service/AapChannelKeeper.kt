@@ -140,7 +140,9 @@ class AapChannelKeeper(
         // because `resolve` exact-matches any bonded address and so passed everything.
         if (!resolver.isPodCandidate(device)) return
 
-        val key = identity.stableKey(device.address)
+        // No model to offer: this is a bonded device, not an advertisement, so it resolves
+        // by exact address and needs no corroboration.
+        val key = identity.stableKey(device.address, model = null)
         attempts?.cancel()
         attempts = scope.launch { openInsistently(key) }
     }

@@ -61,9 +61,13 @@ class AapControlGateway(
         if (connectedAddress == address && readerJob?.isActive == true) return true
         disconnect()
 
-        // The address here comes from an advertisement, which uses a rotating private
-        // address — the channel has to be opened to the paired classic address instead.
-        val resolution = resolver.resolve(address)
+        // An accessory this app can command is one it is paired to, so the key it is
+        // filed under is already the bonded classic address — PodIdentity put it there.
+        // Passing no model asks for exactly that: an exact match, or nothing. An entry
+        // still on a rotating advertised address is one the identity declined to claim,
+        // and opening this phone's channel on its behalf would send someone else's card's
+        // commands to the owner's earbuds.
+        val resolution = resolver.resolve(address, advertisedModel = null)
         val device = (resolution as? BondedPodResolver.Resolution.Resolved)?.device ?: return false
 
         connectedAddress = address

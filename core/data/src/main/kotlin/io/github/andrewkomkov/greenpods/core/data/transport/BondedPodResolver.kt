@@ -5,6 +5,8 @@ import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import io.github.andrewkomkov.greenpods.core.model.AppleAccessoryFamily
+import io.github.andrewkomkov.greenpods.core.model.PodModel
 
 /**
  * Finds the *paired* device that an advertisement belongs to.
@@ -19,8 +21,24 @@ import android.content.Context
  * Correlating the two without privileged access is not possible in general: the whole
  * point of a private address is that it cannot be linked to an identity without the
  * pairing key. What *is* possible is to notice that the user has exactly one paired
- * Apple audio accessory, in which case there is nothing to confuse it with. When there
- * is more than one, that ambiguity is reported rather than guessed at.
+ * Apple audio accessory, and to check that the advertisement could plausibly have come
+ * from it. When it could not, or when several bonds could match, that is reported rather
+ * than guessed at.
+ *
+ * **"Exactly one paired accessory" is not on its own enough**, and believing it was cost
+ * this app a user-visible bug. The scan matches Apple's company id, so it sees *every*
+ * AirPods in radio range, not only the paired ones — and this resolver answered
+ * "that's yours" about all of them. Observed 2026-08-05: a stranger's AirPods 3 at −83 dBm
+ * took the bonded key, the owner's AirPods Pro 3 at −62 were pushed onto their rotating
+ * advertised address and appeared as a second accessory, and the open channel was recorded
+ * against the stranger's entry. Same model as yours and it would have been worse — one
+ * entry, silently carrying someone else's battery and wear.
+ *
+ * So a candidate must now be corroborated by [AppleAccessoryFamily]: the advertised model
+ * and the bonded device's name have to belong to the same product family. That does not
+ * identify anything — two people with the same AirPods Pro remain indistinguishable, which
+ * is exactly what a private address is for — but it rules out the case that actually
+ * happens, at no cost and with no new permission.
  */
 class BondedPodResolver(
     private val context: Context,
@@ -38,12 +56,30 @@ class BondedPodResolver(
             val candidates: List<String>,
         ) : Resolution
 
+        /**
+         * A paired accessory exists, but this advertisement cannot be from it — the
+         * product families disagree. Someone else's AirPods, in other words.
+         */
+        data class NotThisAccessory(
+            val bondedName: String,
+            val advertisedModel: String,
+        ) : Resolution
+
         /** Bluetooth is off, or the Connect permission is missing. */
         data object Unavailable : Resolution
     }
 
+    /**
+     * @param advertisedModel the model this advertisement announced, when the caller has
+     *   it. Null means the caller holds an address rather than an advertisement — in which
+     *   case the only resolution offered is the exact address match, because there is
+     *   nothing to corroborate the single-candidate guess with and guessing is what broke.
+     */
     @SuppressLint("MissingPermission")
-    fun resolve(advertisedAddress: String): Resolution {
+    fun resolve(
+        advertisedAddress: String,
+        advertisedModel: PodModel?,
+    ): Resolution {
         val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter ?: return Resolution.Unavailable
         if (!adapter.isEnabled) return Resolution.Unavailable
 
@@ -54,14 +90,37 @@ class BondedPodResolver(
                 return Resolution.Unavailable
             }
 
-        // A caller that already holds a classic address gets an exact match.
+        // A caller that already holds a classic address gets an exact match. This is the
+        // only branch that is a fact rather than an inference.
         bonded.firstOrNull { it.address == advertisedAddress }?.let { return Resolution.Resolved(it) }
 
         val candidates = bonded.filter { it.looksLikeAppleAudio() }
-        return when (candidates.size) {
-            0 -> Resolution.NoCandidate
-            1 -> Resolution.Resolved(candidates.single())
-            else -> Resolution.Ambiguous(candidates.map { it.name.orEmpty().ifBlank { it.address } })
+        if (candidates.isEmpty()) return Resolution.NoCandidate
+        if (advertisedModel == null) return Resolution.NoCandidate
+
+        val plausible =
+            candidates.filter { AppleAccessoryFamily.couldBeTheSame(it.name, advertisedModel.displayName) }
+
+        return when (plausible.size) {
+            0 -> {
+                Resolution.NotThisAccessory(
+                    bondedName =
+                        candidates
+                            .first()
+                            .name
+                            .orEmpty()
+                            .ifBlank { candidates.first().address },
+                    advertisedModel = advertisedModel.displayName,
+                )
+            }
+
+            1 -> {
+                Resolution.Resolved(plausible.single())
+            }
+
+            else -> {
+                Resolution.Ambiguous(plausible.map { it.name.orEmpty().ifBlank { it.address } })
+            }
         }
     }
 

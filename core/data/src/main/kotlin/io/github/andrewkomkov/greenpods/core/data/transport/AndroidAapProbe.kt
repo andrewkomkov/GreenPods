@@ -23,7 +23,9 @@ class AndroidAapProbe(
     private val resolver: BondedPodResolver = BondedPodResolver(context),
 ) : AapProbe {
     override suspend fun probe(address: String): ProbeOutcome =
-        when (val resolution = resolver.resolve(address)) {
+        // No model: an accessory worth probing is one this phone is paired to, and those
+        // are filed under the bonded address, which matches exactly. See BondedPodResolver.
+        when (val resolution = resolver.resolve(address, advertisedModel = null)) {
             is BondedPodResolver.Resolution.Resolved -> {
                 diagnostics.record(
                     DiagnosticCategory.TRANSPORT,
@@ -35,6 +37,20 @@ class AndroidAapProbe(
             }
 
             BondedPodResolver.Resolution.NoCandidate -> {
+                ProbeOutcome.NoPairedDevice
+            }
+
+            // There is a paired accessory, just not this one. From the caller's side that
+            // is the same answer — this phone has no bond for the thing being probed — and
+            // the reason is recorded rather than folded into a silent negative.
+            is BondedPodResolver.Resolution.NotThisAccessory -> {
+                diagnostics.record(
+                    DiagnosticCategory.TRANSPORT,
+                    "Not probing $address: it is not this phone's accessory",
+                    "Advertised as ${resolution.advertisedModel}; the paired accessory is " +
+                        "${resolution.bondedName}. Different product families, so the " +
+                        "advertisement cannot be from the paired one.",
+                )
                 ProbeOutcome.NoPairedDevice
             }
 

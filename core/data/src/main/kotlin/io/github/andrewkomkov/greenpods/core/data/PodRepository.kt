@@ -356,7 +356,7 @@ class PodRepository(
         known: Map<String, PodState>,
         fresh: PodState,
     ): String {
-        val key = identity.stableKey(fresh.address)
+        val key = identity.stableKey(fresh.address, fresh.model)
         if (key == fresh.address) return key
         val existing = known[key] ?: return key
         return if (existing.model == fresh.model) key else fresh.address

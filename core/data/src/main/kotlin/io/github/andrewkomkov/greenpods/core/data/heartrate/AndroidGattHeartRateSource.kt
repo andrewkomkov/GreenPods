@@ -24,7 +24,8 @@ class AndroidGattHeartRateSource(
     private val resolver: BondedPodResolver = BondedPodResolver(context),
 ) : GattHeartRateReadings {
     override fun readings(address: String): Flow<HeartRateReading> {
-        val resolution = resolver.resolve(address)
+        // Exact match or nothing — see the note in AapControlGateway.
+        val resolution = resolver.resolve(address, advertisedModel = null)
         val device = (resolution as? BondedPodResolver.Resolution.Resolved)?.device ?: return emptyFlow()
         return source.measurements(device)
     }
