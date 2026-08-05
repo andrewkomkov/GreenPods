@@ -390,6 +390,51 @@ class PodRepositoryTest {
         }
 
     @Test
+    fun `an accessory this phone is not paired to never appears at all`() =
+        runTest {
+            // Observed on hardware 2026-08-05: a stranger's AirPods 3 two rooms away took
+            // the bonded key, pushed the owner's AirPods Pro 3 onto a rotating advertised
+            // address, and collected the open channel and every feature with it. The
+            // resolver now says "not this accessory" for such an advertisement, and this
+            // is what the repository must do with that answer — nothing at all, rather
+            // than file it under its own address and show it.
+            val sightings = MutableSharedFlow<PodSighting>(replay = 8)
+            val repository =
+                repository(
+                    source = FakeSource(sightings),
+                    // Mirrors BondedPodIdentity: the owner's model resolves to the bond,
+                    // anything else is positively somebody else's.
+                    identity = { _, model -> BONDED.takeIf { model == PodModel.AIRPODS_PRO_3 } },
+                )
+
+            repository.pods.test {
+                sightings.emit(
+                    sighting(
+                        address = "4E:B1:B5:36:7F:0A",
+                        rssi = -85,
+                        beacon = beacon(model = PodModel.AIRPODS_3),
+                    ),
+                )
+                sightings.emit(
+                    sighting(
+                        address = "AA:AA:AA:AA:AA:01",
+                        rssi = -63,
+                        beacon = beacon(model = PodModel.AIRPODS_PRO_3),
+                    ),
+                )
+
+                val pods = awaitPods { it.isNotEmpty() }
+
+                // The owner's, under the bond. The stranger's, nowhere — not under its
+                // advertised address either, which is what "never appears at all" means.
+                pods.size shouldBe 1
+                pods.single().model shouldBe PodModel.AIRPODS_PRO_3
+                pods.single().address shouldBe BONDED
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
     fun `without a resolvable bond the advertised address is still used`() =
         runTest {
             // Principle II: an accessory that cannot be resolved to a bond is not hidden,

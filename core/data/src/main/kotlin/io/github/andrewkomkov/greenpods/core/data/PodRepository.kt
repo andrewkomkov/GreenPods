@@ -113,6 +113,19 @@ class PodRepository(
      * again once there is a new session to blame it on.
      */
     private val seenHidShapes = mutableSetOf<String>()
+
+    /**
+     * Which foreign models have already been written down.
+     *
+     * Keyed by model rather than by address, and that is the point: a stranger's earbuds
+     * rotate their advertised address, so an address-keyed set would grow all afternoon
+     * while saying the same thing. A model is stable and one line per model is enough.
+     *
+     * This exists because dropping an advertisement silently makes the drop unverifiable —
+     * "the stranger was filtered" and "the stranger walked away" look identical from the
+     * outside, which is precisely the confusion Principle IV forbids.
+     */
+    private val notedForeignModels = mutableSetOf<String>()
     private val _scanFailure = MutableStateFlow<String?>(null)
 
     /**
@@ -355,11 +368,30 @@ class PodRepository(
     private fun stableKeyFor(
         known: Map<String, PodState>,
         fresh: PodState,
-    ): String {
-        val key = identity.stableKey(fresh.address, fresh.model)
+    ): String? {
+        val key = identity.stableKey(fresh.address, fresh.model) ?: return null
         if (key == fresh.address) return key
         val existing = known[key] ?: return key
         return if (existing.model == fresh.model) key else fresh.address
+    }
+
+    /**
+     * Records, once per model, that something Apple-shaped nearby is not this phone's.
+     *
+     * Deliberately says nothing about *which* device it was — no address, no battery, no
+     * wear. It is somebody else's accessory and the whole point of the filter is that the
+     * app keeps nothing about it; a diagnostic that quietly kept a log of the neighbours'
+     * earbuds would defeat its own purpose.
+     */
+    private fun noteForeignAccessory(pod: PodState) {
+        val model = pod.model.displayName
+        if (!notedForeignModels.add(model)) return
+        diagnostics.record(
+            DiagnosticCategory.SCAN,
+            "Ignoring a nearby $model — this phone is not paired to it",
+            "The scan matches Apple's company id, so every AirPods in range is heard. " +
+                "Only accessories that resolve to a bond on this phone become an accessory here.",
+        )
     }
 
     /**
@@ -376,7 +408,24 @@ class PodRepository(
         known: Map<String, PodState>,
         sighting: PodSighting,
     ): Map<String, PodState> {
-        val fresh = sighting.toPodState().let { it.copy(address = stableKeyFor(known, it)) }
+        // Somebody else's earbuds never become an accessory of this phone.
+        //
+        // The scan matches Apple's company id, so it hears every AirPods in range. Until
+        // this returned null for them, a stranger's could take the bonded key, push the
+        // owner's own onto a rotating address and collect the open channel — observed on
+        // 2026-08-05. Dropped here rather than filtered later so that nothing downstream
+        // ever holds state for an accessory this phone is not paired to.
+        //
+        // Only what is *known* to be someone else's is dropped. An identity that cannot
+        // resolve bonds excludes nothing, and `noteUnknownModel` has already run on this
+        // sighting, so an unrecognised model is still recorded for the registry to grow.
+        val candidate = sighting.toPodState()
+        val key =
+            stableKeyFor(known, candidate) ?: run {
+                noteForeignAccessory(candidate)
+                return known
+            }
+        val fresh = candidate.copy(address = key)
         val existing = known[fresh.address]
         val updated =
             existing?.copy(

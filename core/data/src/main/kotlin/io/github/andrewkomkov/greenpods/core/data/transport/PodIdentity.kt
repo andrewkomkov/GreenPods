@@ -32,11 +32,16 @@ fun interface PodIdentity {
      * [model] is what the advertisement announced, and it is not optional decoration: it
      * is the only per-advertisement signal that can tell a stranger's AirPods from the
      * ones this phone is paired to. Null means unknown, and unknown resolves to nothing.
+     *
+     * Returns null when this advertisement is known **not** to come from an accessory this
+     * phone is paired to. That null is a positive statement — "somebody else's" — and not
+     * the same as "cannot tell": an identity that cannot resolve bonds at all must return
+     * the address rather than null, because it has excluded nothing.
      */
     fun stableKey(
         advertisedAddress: String,
         model: PodModel?,
-    ): String
+    ): String?
 
     companion object {
         /**
@@ -44,6 +49,9 @@ fun interface PodIdentity {
          *
          * The honest default: with no way to resolve a bond there is nothing better to
          * use, and pretending otherwise would invent an identity rather than find one.
+         * Never null, for the same reason — an identity that resolves nothing knows
+         * nothing, and so cannot call anything a stranger.
+         *
          * Also what the tests use, so they are not asserting against a Bluetooth stack.
          */
         val Advertised = PodIdentity { address, _ -> address }
@@ -71,25 +79,41 @@ class BondedPodIdentity(
      * address fix the answer for every later one — including a rotation that has since
      * been reused by a different accessory.
      */
-    private val resolved = mutableMapOf<Pair<String, PodModel?>, String>()
+    private val resolved = mutableMapOf<Pair<String, PodModel?>, String?>()
 
     override fun stableKey(
         advertisedAddress: String,
         model: PodModel?,
-    ): String =
+    ): String? =
         synchronized(resolved) {
-            resolved.getOrPut(advertisedAddress to model) {
-                // Unresolvable means unresolvable — an accessory that is not paired, one of
-                // several that a private address cannot choose between, or one whose model
-                // says it is somebody else's. Falling back to the advertised address keeps
-                // such a device visible with the features the advertisement alone can
-                // support, which is Principle II, and keeps it out of this phone's bond,
-                // which is what stops it overwriting the owner's accessory.
-                (resolver.resolve(advertisedAddress, model) as? BondedPodResolver.Resolution.Resolved)
-                    ?.device
-                    ?.address
-                    ?: advertisedAddress
-            }
+            val cacheKey = advertisedAddress to model
+            // Not getOrPut: null is a real answer here — "somebody else's" — and getOrPut
+            // treats a null value as a miss, so every stranger's advertisement would
+            // re-enumerate the bonded devices. In a crowded room that is the common case.
+            if (resolved.containsKey(cacheKey)) return@synchronized resolved[cacheKey]
+
+            val answer =
+                when (val resolution = resolver.resolve(advertisedAddress, model)) {
+                    is BondedPodResolver.Resolution.Resolved -> resolution.device.address
+
+                    // Positively not ours: a paired accessory exists and this is not it.
+                    is BondedPodResolver.Resolution.NotThisAccessory -> null
+
+                    // Nothing Apple-shaped is paired to this phone, so nothing on the air
+                    // can be this phone's accessory either.
+                    BondedPodResolver.Resolution.NoCandidate -> null
+
+                    // Several paired accessories could match, or the stack could not be
+                    // asked. Both are "cannot tell", and excluding on a cannot-tell would
+                    // hide the owner's own earbuds. Keep them under the advertised address,
+                    // which is Principle II — visible with what the advertisement supports.
+                    is BondedPodResolver.Resolution.Ambiguous -> advertisedAddress
+
+                    BondedPodResolver.Resolution.Unavailable -> advertisedAddress
+                }
+
+            resolved[cacheKey] = answer
+            answer
         }
 
     /** Forgets what was resolved, for when the set of bonded devices changes. */
