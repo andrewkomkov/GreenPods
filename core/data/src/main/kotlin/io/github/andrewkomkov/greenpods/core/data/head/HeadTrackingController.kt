@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * A live head-orientation session, for as long as someone is watching it.
@@ -110,6 +111,25 @@ class HeadTrackingController(
                         throw NotStreaming(Refusal.UNAVAILABLE)
                     }
 
+            // Ask the accessory to describe itself before starting.
+            //
+            // Remembering a service is not remembering how to start it. The stored copy
+            // carries a service's identity — its id, its name, that it is the motion one
+            // — but not its report descriptor, and the interval is written into a feature
+            // report that only the descriptor names. So a restored service can be found
+            // and not started, which is exactly what happened here: the stream ran right
+            // after a live announcement and refused on the next link.
+            //
+            // Asking is idempotent and carries no setting, and the answer arrives within
+            // a second on a live channel. The heart-rate session does the same thing for
+            // the same reason.
+            gateway.describeServices(pod.address)
+            withTimeoutOrNull(ANNOUNCEMENT_WAIT_MILLIS) {
+                repository.aapEvents
+                    .filter { it.address == pod.address }
+                    .first { it.event is AapEvent.HidServices }
+            }
+
             val started =
                 gateway.startHeadTracking(
                     address = pod.address,
@@ -161,5 +181,15 @@ class HeadTrackingController(
          * one can perform.
          */
         const val DEFAULT_INTERVAL_MILLIS = 50
+
+        /**
+         * How long to wait for the accessory to describe itself.
+         *
+         * Long enough for an answer on a live channel, short enough that a channel which
+         * will not answer — the announcement is once per Bluetooth connection, and this
+         * one may already have been missed — falls through to the refusal instead of
+         * leaving the screen spinning.
+         */
+        const val ANNOUNCEMENT_WAIT_MILLIS = 2_500L
     }
 }
