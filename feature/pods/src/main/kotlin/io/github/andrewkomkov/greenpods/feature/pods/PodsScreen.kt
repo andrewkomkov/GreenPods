@@ -108,13 +108,13 @@ private fun PodCard(
                     label = "Left",
                     levelPercent = pod.battery.left.levelPercent,
                     charging = pod.battery.left.isCharging,
-                    caption = pod.earDetection.primary.caption(),
+                    caption = pod.earDetection.left.caption(),
                 )
                 BatteryRing(
                     label = "Right",
                     levelPercent = pod.battery.right.levelPercent,
                     charging = pod.battery.right.isCharging,
-                    caption = pod.earDetection.secondary.caption(),
+                    caption = pod.earDetection.right.caption(),
                 )
                 BatteryRing(
                     label = "Case",
@@ -213,7 +213,7 @@ private data class Presence(
 
 private fun PodState.presence(): Presence {
     val inCase =
-        earDetection.primary == WearState.IN_CASE || earDetection.secondary == WearState.IN_CASE
+        earDetection.left == WearState.IN_CASE || earDetection.right == WearState.IN_CASE
     val charging =
         battery.left.isCharging || battery.right.isCharging || battery.case.isCharging
 

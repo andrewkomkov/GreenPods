@@ -2,6 +2,7 @@ package io.github.andrewkomkov.greenpods.core.bluetooth.ble
 
 import io.github.andrewkomkov.greenpods.core.model.ChargeStatus
 import io.github.andrewkomkov.greenpods.core.model.PodModel
+import io.github.andrewkomkov.greenpods.core.model.WearState
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.Test
@@ -64,6 +65,24 @@ class AppleBeaconDecoderTest {
 
         beacon?.battery?.right?.levelPercent shouldBe 100
         beacon?.battery?.left?.levelPercent shouldBe 50
+    }
+
+    @Test
+    fun `the in-ear bits follow the same side flip as the battery nibbles`() {
+        // The bug this pins was on screen: battery resolved the side and wear did not, so
+        // with the right bud primary the app said "Left, in ear" about a bud lying on the
+        // table. Status 0x02 is "primary in ear" with the primary flag clear, which means
+        // the *right* bud is the one being worn.
+        val rightPrimary = AppleBeaconDecoder.decode(payload(status = 0x02, batteryByte = 0xA5))
+
+        rightPrimary?.earDetection?.right shouldBe WearState.IN_EAR
+        rightPrimary?.earDetection?.left shouldBe WearState.OUT_OF_EAR
+
+        // Same bits, primary flag set: now it is the left bud that is worn.
+        val leftPrimary = AppleBeaconDecoder.decode(payload(status = 0x22, batteryByte = 0xA5))
+
+        leftPrimary?.earDetection?.left shouldBe WearState.IN_EAR
+        leftPrimary?.earDetection?.right shouldBe WearState.OUT_OF_EAR
     }
 
     @Test

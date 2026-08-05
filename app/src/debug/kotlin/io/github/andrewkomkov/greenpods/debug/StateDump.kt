@@ -49,8 +49,8 @@ object StateDump {
                 ),
             "wear" to
                 obj(
-                    "primary" to str(pod.earDetection.primary.name),
-                    "secondary" to str(pod.earDetection.secondary.name),
+                    "left" to str(pod.earDetection.left.name),
+                    "right" to str(pod.earDetection.right.name),
                 ),
             "noiseControlMode" to (pod.noiseControlMode?.name?.let(::str) ?: "null"),
             "conversationalAwareness" to (pod.conversationalAwarenessEnabled?.toString() ?: "null"),

@@ -79,7 +79,7 @@ object AutoPausePolicy {
         state: EarDetectionState,
         bothOutRequired: Boolean,
     ): Boolean? {
-        if (state.primary == WearState.UNKNOWN || state.secondary == WearState.UNKNOWN) return null
+        if (state.left == WearState.UNKNOWN || state.right == WearState.UNKNOWN) return null
         return if (bothOutRequired) state.anyInEar else state.bothInEar
     }
 }

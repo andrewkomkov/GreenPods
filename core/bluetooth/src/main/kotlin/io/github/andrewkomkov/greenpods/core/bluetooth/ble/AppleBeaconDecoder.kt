@@ -94,7 +94,7 @@ object AppleBeaconDecoder {
             model = model,
             rawModelId = modelId,
             battery = battery,
-            earDetection = decodeWear(status),
+            earDetection = decodeWear(status, primaryIsLeft),
             lidOpenCounter = payload[8].toInt() and 0xFF,
             colorCode = payload[9].toInt() and 0xFF,
             encryptedPayload = payload.copyOfRange(11, PAIRING_MESSAGE_LENGTH),
@@ -118,7 +118,10 @@ object AppleBeaconDecoder {
             }
         }
 
-    private fun decodeWear(status: Int): EarDetectionState {
+    private fun decodeWear(
+        status: Int,
+        primaryIsLeft: Boolean,
+    ): EarDetectionState {
         val bothInCase = status and FLAG_BOTH_IN_CASE != 0
         val oneInCase = status and FLAG_ONE_POD_IN_CASE != 0
 
@@ -136,7 +139,14 @@ object AppleBeaconDecoder {
                 else -> WearState.OUT_OF_EAR
             }
 
-        return EarDetectionState(primary = primary, secondary = secondary)
+        // The same flip the battery nibbles get. Without it the in-ear bits are
+        // reported against whichever bud happens to be primary, which is the bud
+        // that changes when you put one away.
+        return if (primaryIsLeft) {
+            EarDetectionState(left = primary, right = secondary)
+        } else {
+            EarDetectionState(left = secondary, right = primary)
+        }
     }
 }
 

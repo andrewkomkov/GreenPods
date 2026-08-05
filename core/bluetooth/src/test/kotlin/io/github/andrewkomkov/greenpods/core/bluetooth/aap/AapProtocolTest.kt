@@ -89,8 +89,12 @@ class AapProtocolTest {
                 .shouldBeInstanceOf<AapEvent.EarDetection>()
                 .state
 
-        state.primary shouldBe WearState.IN_EAR
-        state.secondary shouldBe WearState.IN_CASE
+        // Which byte is which *side* is not established — see the note in
+        // docs/protocol-research.md. What this fixture pins is that both buds are
+        // reported and that the two states differ; the side mapping is checked against
+        // hardware, not here.
+        state.left shouldBe WearState.IN_EAR
+        state.right shouldBe WearState.IN_CASE
         state.anyInEar shouldBe true
         state.bothInEar shouldBe false
     }

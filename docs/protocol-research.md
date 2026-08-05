@@ -653,6 +653,26 @@ The channel opened and stayed open.
   "AirPods Pro"; the proximity payload identifies the model as AirPods Pro 3 (`0x2720`).
   Neither is wrong — one is the user-set name, the other is the model.
 
+### Which bud is which — the advertisement says, the AAP payload does not — 2026-08-05
+
+The proximity advertisement describes a **primary** bud and a **secondary** one, and
+carries a flag (`0x20` in the status byte) saying which physical side the primary is.
+Either bud can be primary, and which one it is changes — putting one away is enough.
+
+`AppleBeaconDecoder` applied that flag to the battery nibbles and **not** to the in-ear
+bits, so with the right bud primary the app reported "Left, in ear" about a bud lying on
+a table. Found by wearing one bud and reading the screen. Both now resolve through the
+same flag, and `EarDetectionState` is keyed by side rather than by role so a caller
+cannot reintroduce it.
+
+**Open question.** The AAP ear-detection payload (`04 00 04 00 06 00 xx yy`) carries two
+wear states and *neither* a component id nor a primary flag — unlike AAP battery, which
+labels its components explicitly. It is currently read in the same order the
+advertisement uses. That is the convention the accessory has been observed to follow and
+not something that has been measured; if it is wrong, the two sides are swapped whenever
+the reading comes from the channel rather than the air. Settling it takes one capture:
+open the channel, wear exactly one bud, and read which byte is `0x00`.
+
 ## Sources
 
 - LibrePods protocol notes — `docs/AAP Definitions.md`, `opcodes.md`,

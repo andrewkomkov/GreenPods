@@ -92,8 +92,8 @@ class EarDetectionController(
             diagnostics.record(
                 category = DiagnosticCategory.MEDIA,
                 message =
-                    "Wear ${previous.primary}/${previous.secondary} -> " +
-                        "${pod.earDetection.primary}/${pod.earDetection.secondary}: ${decision ?: "no action"}",
+                    "Wear ${previous.left}/${previous.right} -> " +
+                        "${pod.earDetection.left}/${pod.earDetection.right}: ${decision ?: "no action"}",
                 detail =
                     "playing=${context.isPlaying}, pausedBy=${context.pauseSource}, " +
                         "bluetoothOutput=${context.isActiveAudioOutput}, autoPause=${settings.autoPauseEnabled}, " +

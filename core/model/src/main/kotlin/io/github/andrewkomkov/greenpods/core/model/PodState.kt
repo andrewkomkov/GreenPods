@@ -54,12 +54,22 @@ data class BatteryState(
 /** Where a single bud currently is. */
 enum class WearState { IN_EAR, OUT_OF_EAR, IN_CASE, UNKNOWN }
 
+/**
+ * Where each bud is, **by side**.
+ *
+ * Named left and right rather than primary and secondary on purpose. The
+ * advertisement describes a primary bud and a secondary one, and which physical side
+ * that is flips — either bud can be the one talking to the phone. Battery already
+ * resolved that flag and wear did not, so a screen that labelled the primary bud
+ * "Left" told half its users the wrong ear. Resolving it once, here at the edge, is
+ * the only way a caller cannot get it wrong.
+ */
 data class EarDetectionState(
-    val primary: WearState = WearState.UNKNOWN,
-    val secondary: WearState = WearState.UNKNOWN,
+    val left: WearState = WearState.UNKNOWN,
+    val right: WearState = WearState.UNKNOWN,
 ) {
-    val anyInEar: Boolean get() = primary == WearState.IN_EAR || secondary == WearState.IN_EAR
-    val bothInEar: Boolean get() = primary == WearState.IN_EAR && secondary == WearState.IN_EAR
+    val anyInEar: Boolean get() = left == WearState.IN_EAR || right == WearState.IN_EAR
+    val bothInEar: Boolean get() = left == WearState.IN_EAR && right == WearState.IN_EAR
 }
 
 /**

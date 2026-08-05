@@ -64,9 +64,9 @@ class SyntheticBeaconTest {
 
         val out = decode(wear = "out").shouldNotBeNull().earDetection
         out.anyInEar shouldBe false
-        out.primary shouldBe WearState.OUT_OF_EAR
+        out.left shouldBe WearState.OUT_OF_EAR
 
-        decode(wear = "in_case").shouldNotBeNull().earDetection.primary shouldBe WearState.IN_CASE
+        decode(wear = "in_case").shouldNotBeNull().earDetection.left shouldBe WearState.IN_CASE
     }
 
     @Test

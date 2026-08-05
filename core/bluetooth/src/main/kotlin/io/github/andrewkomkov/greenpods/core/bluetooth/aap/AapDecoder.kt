@@ -344,12 +344,23 @@ class AapDecoder(
         return AapEvent.Battery(state)
     }
 
+    /**
+     * Two wear states, in an order that is **not yet verified against hardware**.
+     *
+     * The advertisement labels its two buds primary and secondary and carries a flag
+     * saying which side the primary is; this payload carries neither. It is read here in
+     * the same order the advertisement uses, which is the only convention the accessory
+     * has been observed to follow — but "the only convention observed" is not the same as
+     * "measured", and if it is wrong the two sides are simply swapped. Recorded as an
+     * open question in `docs/protocol-research.md` rather than left as a silent
+     * assumption; it takes one bud out of one ear to settle.
+     */
     private fun decodeEarDetection(payload: ByteArray): AapEvent.EarDetection? {
         if (payload.size < 2) return null
         return AapEvent.EarDetection(
             EarDetectionState(
-                primary = wearState(payload[0].toInt() and 0xFF),
-                secondary = wearState(payload[1].toInt() and 0xFF),
+                left = wearState(payload[0].toInt() and 0xFF),
+                right = wearState(payload[1].toInt() and 0xFF),
             ),
         )
     }
