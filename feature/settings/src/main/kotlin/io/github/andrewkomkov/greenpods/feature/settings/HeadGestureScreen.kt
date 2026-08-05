@@ -152,11 +152,16 @@ private fun Mirror(
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
     ) {
         Box(Modifier.fillMaxWidth().height(280.dp), contentAlignment = Alignment.Center) {
+            // Colours given rather than defaulted. The toy's default face is
+            // `primaryContainer`, which is exactly the colour of the card it sits on —
+            // the head vanished and left a pair of eyes floating in the void.
             HeadMotionToy(
                 yawDegrees = state.pose.yawDegrees,
                 pitchDegrees = state.pose.pitchDegrees,
                 rollDegrees = state.pose.rollDegrees,
                 celebrating = celebrating,
+                faceColor = MaterialTheme.colorScheme.primary,
+                featureColor = MaterialTheme.colorScheme.onPrimary,
             )
 
             if (!state.streaming) {
