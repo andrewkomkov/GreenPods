@@ -1,5 +1,7 @@
 package io.github.andrewkomkov.greenpods.core.bluetooth.aap
 
+import kotlin.math.pow
+
 /**
  * One declared field inside a report, with its position derived rather than written down.
  *
@@ -15,16 +17,77 @@ data class HidReportField(
     val bitOffset: Int,
     /** Byte position within the whole report, report id included. */
     val byteOffset: Int,
+    /**
+     * The range the raw value is declared to span. Defaults describe a field that
+     * declared nothing, which HID treats as an unconstrained unsigned value.
+     */
+    val logicalMinimum: Int = 0,
+    val logicalMaximum: Int = 0,
+    /**
+     * The range the raw value *means*, in the field's unit.
+     *
+     * Both zero is HID's "same as logical" — the spec's own default, not a sentinel this
+     * code invented — and [toPhysical] then returns the raw value unchanged.
+     */
+    val physicalMinimum: Int = 0,
+    val physicalMaximum: Int = 0,
+    /** Power of ten applied to the physical value. HID stores it as a signed nibble. */
+    val unitExponent: Int = 0,
 ) {
     val byteSize: Int get() = (bitSize * count) / 8
 
     /** True when this field sits on byte boundaries and can be read as whole bytes. */
     val isByteAligned: Boolean get() = bitOffset % 8 == 0 && bitSize % 8 == 0
 
+    /**
+     * True when the declared range goes below zero, so the raw bytes are two's complement.
+     *
+     * Worth reading off the descriptor rather than assuming either way: an orientation
+     * read as unsigned is not slightly wrong, it is wrong by a whole turn on half the
+     * inputs.
+     */
+    val isSigned: Boolean get() = logicalMinimum < 0
+
+    /**
+     * Whether this field says enough to convert a raw reading into its unit.
+     *
+     * False means the accessory declared no usable mapping, and a caller must say so
+     * rather than fall back to a constant — a made-up scale is indistinguishable from a
+     * measured one once it is past this point.
+     */
+    val hasPhysicalScale: Boolean
+        get() = logicalMaximum != logicalMinimum && physicalMaximum != physicalMinimum
+
+    /**
+     * Maps a raw reading onto the unit the descriptor declares.
+     *
+     * This is HID's own formula, and using it is the difference between reporting degrees
+     * because the accessory said so and reporting degrees because somebody divided by
+     * `Short.MAX_VALUE` and it looked about right.
+     */
+    fun toPhysical(raw: Int): Double {
+        if (logicalMaximum == logicalMinimum) return raw.toDouble()
+        val scaled =
+            if (physicalMaximum == physicalMinimum) {
+                // HID's default: the physical range is the logical range.
+                raw.toDouble()
+            } else {
+                physicalMinimum +
+                    (raw - logicalMinimum).toDouble() *
+                    (physicalMaximum - physicalMinimum) /
+                    (logicalMaximum - logicalMinimum)
+            }
+        return scaled * TEN.pow(unitExponent)
+    }
+
     fun matches(
         page: Int,
         usage: Int,
     ): Boolean = usagePage == page && this.usage == usage
+
+    private companion object {
+        const val TEN = 10.0
+    }
 }
 
 /** Every field one report id declares, in declaration order. */
@@ -113,6 +176,11 @@ data class HidReportDescriptor(
         private const val MAIN_END_COLLECTION = 12
 
         private const val GLOBAL_USAGE_PAGE = 0
+        private const val GLOBAL_LOGICAL_MINIMUM = 1
+        private const val GLOBAL_LOGICAL_MAXIMUM = 2
+        private const val GLOBAL_PHYSICAL_MINIMUM = 3
+        private const val GLOBAL_PHYSICAL_MAXIMUM = 4
+        private const val GLOBAL_UNIT_EXPONENT = 5
         private const val GLOBAL_REPORT_SIZE = 7
         private const val GLOBAL_REPORT_ID = 8
         private const val GLOBAL_REPORT_COUNT = 9
@@ -136,6 +204,11 @@ data class HidReportDescriptor(
             var reportSize = 0
             var reportCount = 0
             var reportId = 0
+            var logicalMinimum = 0
+            var logicalMaximum = 0
+            var physicalMinimum = 0
+            var physicalMaximum = 0
+            var unitExponent = 0
             val localUsages = mutableListOf<Int>()
             var usageMinimum: Int? = null
 
@@ -174,9 +247,27 @@ data class HidReportDescriptor(
                     TYPE_GLOBAL -> {
                         when (tag) {
                             GLOBAL_USAGE_PAGE -> usagePage = value
+
                             GLOBAL_REPORT_SIZE -> reportSize = value
+
                             GLOBAL_REPORT_ID -> reportId = value
+
                             GLOBAL_REPORT_COUNT -> reportCount = value
+
+                            // Ranges are signed: HID writes a logical minimum of -32767 as
+                            // `16 01 80`, and reading that unsigned yields 32769, which
+                            // then says the field is unsigned and inverts half its range.
+                            GLOBAL_LOGICAL_MINIMUM -> logicalMinimum = signed(descriptor, offset - size, size)
+
+                            GLOBAL_LOGICAL_MAXIMUM -> logicalMaximum = signed(descriptor, offset - size, size)
+
+                            GLOBAL_PHYSICAL_MINIMUM -> physicalMinimum = signed(descriptor, offset - size, size)
+
+                            GLOBAL_PHYSICAL_MAXIMUM -> physicalMaximum = signed(descriptor, offset - size, size)
+
+                            // A signed nibble, not a byte: 0x0F means -1, not 15.
+                            GLOBAL_UNIT_EXPONENT -> unitExponent = signedNibble(value)
+
                             else -> Unit
                         }
                     }
@@ -206,6 +297,11 @@ data class HidReportDescriptor(
                                         count = reportCount,
                                         bitOffset = 0,
                                         byteOffset = 0,
+                                        logicalMinimum = logicalMinimum,
+                                        logicalMaximum = logicalMaximum,
+                                        physicalMinimum = physicalMinimum,
+                                        physicalMaximum = physicalMaximum,
+                                        unitExponent = unitExponent,
                                     )
                                 val bits = if (tag == MAIN_INPUT) inputBits else featureBits
                                 val sink = if (tag == MAIN_INPUT) inputs else features
@@ -331,6 +427,33 @@ data class HidReportDescriptor(
             val type = (prefix shr 2) and 0x03
             val tag = (prefix shr 4) and 0x0F
             return type == TYPE_GLOBAL && tag == GLOBAL_USAGE_PAGE && sizeCode in 1..2
+        }
+
+        /**
+         * A global item's data as a signed value, sign-extended from its own width.
+         *
+         * HID stores Logical and Physical bounds as signed, and the width is whatever the
+         * item prefix chose — so -1 is `FF` in a one-byte item and `FF FF` in a two-byte
+         * one, and neither is 255 or 65535.
+         *
+         * A zero-length item carries no data and means zero.
+         */
+        private fun signed(
+            data: ByteArray,
+            from: Int,
+            size: Int,
+        ): Int {
+            if (size == 0) return 0
+            val raw = unsigned(data, from, size)
+            if (size >= 4) return raw
+            val signBit = 1 shl (size * 8 - 1)
+            return if (raw and signBit != 0) raw - (1 shl (size * 8)) else raw
+        }
+
+        /** HID's 4-bit signed exponent: 0..7 are themselves, 8..15 are -8..-1. */
+        private fun signedNibble(value: Int): Int {
+            val nibble = value and 0x0F
+            return if (nibble >= 8) nibble - 16 else nibble
         }
 
         private fun unsigned(

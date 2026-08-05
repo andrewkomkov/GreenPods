@@ -164,6 +164,16 @@ class AapControlGateway(
      */
     suspend fun requestNotifications(): Boolean = session.requestNotifications()
 
+    /**
+     * What the accessory has said about its own sensor services, live or remembered.
+     *
+     * Read-only, and exposed because the descriptors are the ground truth for every
+     * offset and every scale this app reads out of a sensor report. When a decoded value
+     * looks wrong, the question is always whether the descriptor says something different
+     * from what the decoder assumed, and that is unanswerable without seeing it.
+     */
+    val describedServices: List<HidService> get() = session.describedServices
+
     fun disconnect() {
         readerJob?.cancel()
         readerJob = null

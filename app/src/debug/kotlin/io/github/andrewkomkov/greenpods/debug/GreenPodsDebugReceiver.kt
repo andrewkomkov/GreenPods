@@ -85,6 +85,10 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                 raw(app, intent.getStringExtra("hex").orEmpty())
             }
 
+            "hid" -> {
+                hid(app)
+            }
+
             "hr" -> {
                 heartRate(app, intent.getStringExtra("value").orEmpty())
             }
@@ -100,7 +104,7 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
             else -> {
                 reply(
                     "unknown command '$command'. Known: dump, probe, set, inject, monitor, clear, " +
-                        "hiddenapi, anc, raw, hr, health. See docs/adb.md",
+                        "hiddenapi, anc, raw, hid, hr, health. See docs/adb.md",
                 )
             }
         }
@@ -212,6 +216,99 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
             reply("raw: ${packet.size} bytes to ${pod.address} -> accepted=$sent")
         }
     }
+
+    /**
+     * Prints the accessory's own description of its sensor services.
+     *
+     * Every offset and every scale this app reads out of a sensor report is supposed to
+     * come from here rather than from a constant, so when a decoded value looks wrong the
+     * first question is what the descriptor actually declares. Without a way to see it,
+     * that question can only be answered by guessing — which is how a head pose came to be
+     * read at three offsets nobody had derived.
+     *
+     * Descriptors are not measurements: they carry no heart rate and no orientation, only
+     * the shape of the reports that will. Printing them is safe in a way that printing a
+     * report body is not.
+     */
+    private fun hid(app: GreenPodsApplication) {
+        app.applicationScope.launch {
+            val pod = app.awaitPods(DEFAULT_WAIT_MILLIS).firstOrNull()
+            if (pod == null) {
+                reply("hid: no accessory in range")
+                return@launch
+            }
+
+            // The announcement happens once per connection, so ask for it rather than
+            // assuming this channel has already seen one.
+            app.controlGateway.describeServices(pod.address)
+            delay(DESCRIBE_WAIT_MILLIS)
+
+            val services = app.controlGateway.describedServices
+            if (services.isEmpty()) {
+                reply("hid: ${pod.address} described no services")
+                return@launch
+            }
+
+            reply("hid: ${pod.address} describes ${services.size} services")
+            services.forEach { service ->
+                val tags =
+                    buildList {
+                        if (service.isHeartRate) add("heartRate")
+                        if (service.isHeadTracking) add("headTracking")
+                    }.joinToString(",").ifEmpty { "-" }
+                reply(
+                    "hid: service 0x%02X name=%s tags=%s descriptor=%d bytes".format(
+                        service.id,
+                        service.name ?: "?",
+                        tags,
+                        service.reportDescriptor.size,
+                    ),
+                )
+                reply("hid: 0x%02X descriptor %s".format(service.id, hex(service.reportDescriptor)))
+
+                val layout = service.layout
+                if (layout == null) {
+                    reply("hid: 0x%02X descriptor did not parse".format(service.id))
+                    return@forEach
+                }
+                layout.reports.forEach { report ->
+                    reply(
+                        "hid: 0x%02X report %d input=%d bytes".format(
+                            service.id,
+                            report.reportId,
+                            report.inputByteSize,
+                        ),
+                    )
+                    report.inputFields.forEach { field ->
+                        reply(
+                            "hid: 0x%02X   in  page=0x%04X usage=0x%04X bits=%d x%d at byte %d".format(
+                                service.id,
+                                field.usagePage,
+                                field.usage,
+                                field.bitSize,
+                                field.count,
+                                field.byteOffset,
+                            ),
+                        )
+                    }
+                    report.featureFields.forEach { field ->
+                        reply(
+                            "hid: 0x%02X   fea page=0x%04X usage=0x%04X bits=%d x%d at byte %d".format(
+                                service.id,
+                                field.usagePage,
+                                field.usage,
+                                field.bitSize,
+                                field.count,
+                                field.byteOffset,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun hex(bytes: ByteArray): String = bytes.joinToString(" ") { "%02X".format(it) }
 
     /**
      * Turns heart-rate sensing on or off, or prints what it is doing.
@@ -497,6 +594,15 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
 
         /** How long to let the accessory answer a write before reporting what it said. */
         const val ECHO_WAIT_MILLIS = 1_500L
+
+        /**
+         * How long to let the service announcement arrive.
+         *
+         * Longer than an echo: the announcement is several kilobytes across two frames,
+         * and it is sent once per connection, so a short wait here reports "no services"
+         * for an accessory that was about to describe itself.
+         */
+        const val DESCRIBE_WAIT_MILLIS = 3_000L
 
         /** The window `health count` looks back over when none is given. */
         const val DEFAULT_HEALTH_WINDOW_MINUTES = 10L

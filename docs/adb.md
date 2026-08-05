@@ -106,6 +106,27 @@ interval set to zero stops it. This is how undecoded protocol behaviour gets
 characterised, and it goes over the ordinary session on purpose — an experiment on a
 private channel would prove nothing about the real one.
 
+### Reading what the accessory says about its own sensors
+
+```bash
+gp --es cmd hid
+```
+
+Prints every HID service the accessory announced — id, name, the report descriptor in
+hex, and the descriptor walked into fields:
+
+```
+hid: service 0x10 name=devmotion tags=headTracking descriptor=… bytes
+hid: 0x10 report 1 input=… bytes
+hid: 0x10   in  page=0x0020 usage=0x0201 bits=16 x1 at byte 1
+```
+
+This is the ground truth for every offset and every scale the app reads out of a sensor
+report. When a decoded value looks wrong — a head tilt of 195°, say — the first question
+is what the descriptor actually declares, and without this the only way to answer it was
+to guess. Descriptors carry no measurements: no heart rate, no orientation, only the
+shape of the reports that will carry them.
+
 To see the raw frames behind any of this:
 
 ```bash

@@ -1,5 +1,6 @@
 package io.github.andrewkomkov.greenpods.core.bluetooth.aap
 
+import io.kotest.matchers.doubles.plusOrMinus
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -120,6 +121,108 @@ class HidReportDescriptorTest {
     }
 
     @Test
+    fun `the declared ranges are read off the capture, not assumed`() {
+        val report = checkNotNull(descriptor.report(1))
+
+        // `14 … 26 FF 00` — logical 0..255, so the heart-rate byte is unsigned.
+        val heartRate =
+            checkNotNull(report.input(HidReportDescriptor.USAGE_PAGE_SENSORS, HidReportDescriptor.USAGE_HEART_RATE))
+        heartRate.logicalMinimum shouldBe 0
+        heartRate.logicalMaximum shouldBe 255
+        heartRate.isSigned shouldBe false
+
+        // `26 FF 7F` — the sequence counter runs to 32767 rather than to 65535.
+        val sequence =
+            checkNotNull(report.input(HidReportDescriptor.USAGE_PAGE_APPLE_VENDOR, HidReportDescriptor.USAGE_SEQUENCE))
+        sequence.logicalMaximum shouldBe 32767
+
+        // `15 01 25 02` — the status enum, and the one field here with a non-zero floor.
+        val status = report.inputFields[3]
+        status.logicalMinimum shouldBe 1
+        status.logicalMaximum shouldBe 2
+    }
+
+    @Test
+    fun `a field that declares no physical range reports its raw value`() {
+        // HID's own default, and the reason it matters: this is what stops a missing
+        // declaration from silently becoming a scale of zero.
+        val heartRate =
+            checkNotNull(
+                checkNotNull(descriptor.report(1))
+                    .input(HidReportDescriptor.USAGE_PAGE_SENSORS, HidReportDescriptor.USAGE_HEART_RATE),
+            )
+
+        heartRate.hasPhysicalScale shouldBe false
+        heartRate.toPhysical(72) shouldBe 72.0
+    }
+
+    @Test
+    fun `a signed logical minimum is sign-extended from its own width`() {
+        // `16 01 80` is -32767, not 32769. Read unsigned, the field stops looking signed
+        // and every negative reading comes out a whole turn away — which is exactly the
+        // failure mode an orientation field would have.
+        val signedField =
+            checkNotNull(
+                HidReportDescriptor.parse(
+                    AapFixtures.hex(
+                        "05 20 09 16 A1 01 85 01 0A 01 03 16 01 80 26 FF 7F " +
+                            "75 10 95 01 81 02 C0",
+                    ),
+                ),
+            )
+        val field = checkNotNull(signedField.report(1)).inputFields.single()
+
+        field.logicalMinimum shouldBe -32767
+        field.logicalMaximum shouldBe 32767
+        field.isSigned shouldBe true
+    }
+
+    @Test
+    fun `a declared physical range converts a raw reading into its unit`() {
+        // The same field, now declaring physical -180..180 with exponent 0: the mapping
+        // stops being a guess and becomes arithmetic on what the accessory said.
+        val parsed =
+            checkNotNull(
+                HidReportDescriptor.parse(
+                    AapFixtures.hex(
+                        "05 20 09 16 A1 01 85 01 0A 01 03 16 01 80 26 FF 7F " +
+                            "36 4C FF 46 B4 00 55 00 75 10 95 01 81 02 C0",
+                    ),
+                ),
+            )
+        val field = checkNotNull(parsed.report(1)).inputFields.single()
+
+        field.physicalMinimum shouldBe -180
+        field.physicalMaximum shouldBe 180
+        field.unitExponent shouldBe 0
+        field.hasPhysicalScale shouldBe true
+
+        field.toPhysical(0) shouldBe 0.0
+        field.toPhysical(32767) shouldBe 180.0
+        field.toPhysical(-32767) shouldBe (-180.0 plusOrMinus TOLERANCE)
+    }
+
+    @Test
+    fun `a negative unit exponent is a signed nibble, not a byte`() {
+        // `55 0F` is 10^-1, not 10^15. Getting this wrong is not a rounding error; it is
+        // fourteen orders of magnitude.
+        val parsed =
+            checkNotNull(
+                HidReportDescriptor.parse(
+                    AapFixtures.hex(
+                        "05 20 09 16 A1 01 85 01 0A 01 03 15 00 26 E8 03 " +
+                            "35 00 46 E8 03 55 0F 75 10 95 01 81 02 C0",
+                    ),
+                ),
+            )
+        val field = checkNotNull(parsed.report(1)).inputFields.single()
+
+        field.unitExponent shouldBe -1
+        // 1000 raw maps onto 1000 physical, then 10^-1 — a tenth of a unit per count.
+        field.toPhysical(1000) shouldBe (100.0 plusOrMinus TOLERANCE)
+    }
+
+    @Test
     fun `nonsense is rejected rather than half-parsed`() {
         HidReportDescriptor.parse(ByteArray(0)).shouldBeNull()
         // A trailing item that claims more data than the descriptor holds.
@@ -131,6 +234,11 @@ class HidReportDescriptorTest {
         val padded = AapFixtures.heartRateReportDescriptor + ByteArray(32) { 0x5A }
 
         HidReportDescriptor.extentOf(padded, 0) shouldBe AapFixtures.heartRateReportDescriptor.size
+    }
+
+    private companion object {
+        /** Floating-point slack: the mapping is a ratio, so exact equality is luck. */
+        const val TOLERANCE = 1e-6
     }
 
     /** Drops the `06 15 FF 0A 20 01 95 01 75 08 81 02` group — the confidence input. */
