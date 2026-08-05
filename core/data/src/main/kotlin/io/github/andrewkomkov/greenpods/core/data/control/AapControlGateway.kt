@@ -122,7 +122,20 @@ class AapControlGateway(
             if (!session.awaitReady()) return@launch
             // Seed before announcing, so anything that reacts to the channel opening
             // already has the service ids this accessory gave us last time.
-            runCatching { session.restoreServices(serviceMemory.remembered(address)) }
+            //
+            // And *say* that it happened. Consumers learn which service is which from
+            // `AapEvent.HidServices` and from nothing else, so seeding the decoder
+            // silently left them waiting for an announcement that never comes: the
+            // accessory announces once per connection, and a channel that already knows
+            // has no reason to ask again. Measured on hardware 2026-08-05 — heart rate
+            // sat in STARTING with `service=none` indefinitely while the very same
+            // channel could list the heart-rate service on demand.
+            runCatching {
+                session.restoreServices(serviceMemory.remembered(address))
+                session.describedServices
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { restored -> repository.onAapEvent(address, AapEvent.HidServices(restored)) }
+            }
             repository.onAapChannelOpen(address)
         }
         return true
