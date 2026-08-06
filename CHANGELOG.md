@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.1](https://github.com/andrewkomkov/GreenPods/compare/v0.5.0...v0.5.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* verify the stale-reading withdrawal, and stop two controls being unreadable ([#16](https://github.com/andrewkomkov/GreenPods/issues/16)) ([d9bc8c2](https://github.com/andrewkomkov/GreenPods/commit/d9bc8c29492f94731baf35189c51c45aa9d1a003))
+
+
+### Documentation
+
+* record that the heart-rate controller's clock stops ([#14](https://github.com/andrewkomkov/GreenPods/issues/14)) ([86b8896](https://github.com/andrewkomkov/GreenPods/commit/86b889678defe524077896963911772162faf4d3))
+
 ## [0.5.0](https://github.com/andrewkomkov/GreenPods/compare/v0.4.0...v0.5.0) (2026-08-06)
 
 
