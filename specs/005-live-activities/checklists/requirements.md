@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -48,21 +48,21 @@ The project constitution is unusually load-bearing here, so it is checked explic
 
 ## Notes
 
-Three open questions remain, recorded in the spec's Open Questions section rather than
-guessed at:
+All three questions were resolved by the project owner on 2026-08-06 and are recorded, with
+their consequences, in the spec's Decisions section:
 
-1. **Q1 (FR-018)** — whether a heart-rate value may appear on a lock screen. Left open
-   deliberately: this is a privacy decision about a health measurement on a surface
-   readable by bystanders, and the project's existing rule does not settle it, because
-   that rule is about diagnostic paths rather than user-facing ones. No default is safe
-   enough to assume.
-2. **Q2 (FR-001)** — permanent surface versus event-driven. Affects scope and the value of
-   SC-001.
-3. **Q3 (FR-014)** — what phones below the supporting platform version get. Affects how
-   much of the work lands for the majority of installs.
-
-Resolve with `/speckit-clarify` before `/speckit-plan`.
+1. **D1 (FR-018)** — the heart rate **is** shown, lock screen included, with a setting to
+   hide the value. The disclosure is not subject to that setting (FR-018a), and the
+   existing "no reading in any diagnostic path" rule is untouched and still binds `dump`,
+   `hr status` and the frame log.
+2. **D2 (FR-001)** — the surface is **permanent** while monitoring runs. Event-driven
+   promotion was rejected; an answer that is only sometimes present is not glanceable.
+3. **D3 (FR-014)** — phones below the supporting platform version get **nothing new**. A
+   deliberate scope cut landing on most installs. It does not extend to silence: FR-014a
+   still requires them to be told why, which is the only part of the feature they receive.
 
 One item is intentionally deferred rather than failed: the spec names no platform version.
 The supporting version is a planning input, not a user requirement, and pinning it here
 would put an implementation detail in a stakeholder document.
+
+Ready for `/speckit-plan`.
