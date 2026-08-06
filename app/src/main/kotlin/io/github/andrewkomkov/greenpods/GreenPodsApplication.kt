@@ -14,6 +14,7 @@ import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.ear.AndroidPlaybackActuator
 import io.github.andrewkomkov.greenpods.core.data.ear.EarDetectionController
 import io.github.andrewkomkov.greenpods.core.data.environment.AndroidEnvironmentMonitor
+import io.github.andrewkomkov.greenpods.core.data.head.HeadCalibrationStore
 import io.github.andrewkomkov.greenpods.core.data.health.AndroidHealthStoreClient
 import io.github.andrewkomkov.greenpods.core.data.health.HealthConnectLink
 import io.github.andrewkomkov.greenpods.core.data.heartrate.AndroidGattHeartRateSource
@@ -89,6 +90,20 @@ class GreenPodsApplication : Application() {
      * the case.
      */
     val hidServiceMemory: HidServiceMemory get() = store.hidServices
+
+    /**
+     * What a head calibration measured, per accessory model.
+     *
+     * On the same store as everything else, for the reason `GreenPodsStore` gives: DataStore
+     * serialises through one writer per file, so a second store on that file corrupts it.
+     * Exposed the way `settingsRepository` and `hidServiceMemory` are — the app module holds
+     * the container and never names a `DataStore`.
+     *
+     * Read by the calibration wizard, by the state dump and by `HeadPoseMapper` through
+     * `HeadTrackingController`. A model with nothing stored is not an error here: it reads
+     * back as uncalibrated, and the mapper falls through to its labelled approximation.
+     */
+    val headCalibrationStore: HeadCalibrationStore get() = store.headCalibrations
 
     val transportGate: TransportGate by lazy {
         TransportGate(diagnostics = diagnostics, aapProbe = AndroidAapProbe(this, diagnostics))

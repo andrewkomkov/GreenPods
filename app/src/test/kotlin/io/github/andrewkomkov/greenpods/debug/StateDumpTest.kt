@@ -2,13 +2,18 @@ package io.github.andrewkomkov.greenpods.debug
 
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticCategory
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticEvent
+import io.github.andrewkomkov.greenpods.core.model.AxisCalibration
+import io.github.andrewkomkov.greenpods.core.model.AxisVerdict
 import io.github.andrewkomkov.greenpods.core.model.BatteryComponent
 import io.github.andrewkomkov.greenpods.core.model.BatteryState
 import io.github.andrewkomkov.greenpods.core.model.ChargeStatus
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
+import io.github.andrewkomkov.greenpods.core.model.HeadAxis
+import io.github.andrewkomkov.greenpods.core.model.HeadCalibration
 import io.github.andrewkomkov.greenpods.core.model.HeartRateReading
 import io.github.andrewkomkov.greenpods.core.model.HeartRateSensing
 import io.github.andrewkomkov.greenpods.core.model.HeartRateState
+import io.github.andrewkomkov.greenpods.core.model.OrientationField
 import io.github.andrewkomkov.greenpods.core.model.PodModel
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.Transport
@@ -48,12 +53,16 @@ class StateDumpTest {
         pods: List<PodState> = listOf(pod),
         diagnostics: List<DiagnosticEvent> = emptyList(),
         scanFailure: String? = null,
+        calibrations: List<HeadCalibration> = emptyList(),
+        connectedModel: PodModel? = pods.firstOrNull()?.model,
     ) = StateDump.render(
         pods = pods,
         settings = GreenPodsSettings.Default,
         diagnostics = diagnostics,
         scanFailure = scanFailure,
         version = "1.2.3",
+        calibrations = calibrations,
+        connectedModel = connectedModel,
     )
 
     @Test
@@ -155,6 +164,79 @@ class StateDumpTest {
         json shouldNotContain "137"
         json shouldNotContain "heartRateBpm"
         json shouldNotContain "233"
+    }
+
+    @Test
+    fun `a never-calibrated axis is present and says so, rather than being absent`() {
+        // The whole reason this object is in the dump. "Never measured" and "the dump forgot
+        // it" are different facts, and a missing key gives a reader no way to tell them apart.
+        val json = render()
+
+        json shouldContain "\"connectedModel\":\"AIRPODS_PRO_2\""
+        json shouldContain "\"YAW\":{\"verdict\":\"UNCALIBRATED\""
+        json shouldContain "\"PITCH\":{\"verdict\":\"UNCALIBRATED\""
+        json shouldContain "\"ROLL\":{\"verdict\":\"UNCALIBRATED\""
+        json shouldContain "\"applied\":false"
+    }
+
+    @Test
+    fun `only the connected model's measured axes are reported as applied`() {
+        val measured =
+            HeadCalibration(
+                model = PodModel.AIRPODS_PRO_2,
+                axes =
+                    mapOf(
+                        HeadAxis.YAW to
+                            AxisCalibration(
+                                HeadAxis.YAW,
+                                AxisVerdict.Measured(0.01431f, OrientationField.O1, 6290),
+                            ),
+                        // A scale the app itself called implausible, and nobody has confirmed:
+                        // it carries a number and must still not be in force.
+                        HeadAxis.PITCH to
+                            AxisCalibration(
+                                HeadAxis.PITCH,
+                                AxisVerdict.Suspect(2.25f, OrientationField.O2, 40, "90 degrees from 40 units"),
+                            ),
+                        HeadAxis.ROLL to
+                            AxisCalibration(HeadAxis.ROLL, AxisVerdict.NotHeld("never settled")),
+                    ),
+            )
+        val elsewhere = HeadCalibration.uncalibrated(PodModel.AIRPODS_PRO_3)
+
+        val json = render(calibrations = listOf(measured, elsewhere))
+
+        json shouldContain "\"verdict\":\"MEASURED\""
+        json shouldContain "\"field\":\"O1\""
+        json shouldContain "\"applied\":true"
+        json shouldContain "\"verdict\":\"SUSPECT\""
+        json shouldContain "\"verdict\":\"NOT_HELD\""
+        json shouldContain "never settled"
+        // The other model is stored and idle; it is listed, and nothing of it is in force.
+        json shouldContain "\"model\":\"AIRPODS_PRO_3\", \"connected\":false"
+    }
+
+    @Test
+    fun `an unmeasurable verdict carries no number for anyone to mistake for one`() {
+        val refused =
+            HeadCalibration(
+                model = PodModel.AIRPODS_PRO_2,
+                axes =
+                    HeadAxis.entries.associateWith { axis ->
+                        AxisCalibration(
+                            axis,
+                            AxisVerdict.CrossCoupled(
+                                mapOf(OrientationField.O1 to 6290, OrientationField.O2 to 5900),
+                            ),
+                        )
+                    },
+            )
+
+        val json = render(calibrations = listOf(refused))
+
+        json shouldContain "\"verdict\":\"CROSS_COUPLED\""
+        json shouldContain "\"degreesPerUnit\":null"
+        json shouldNotContain "\"applied\":true"
     }
 
     @Test

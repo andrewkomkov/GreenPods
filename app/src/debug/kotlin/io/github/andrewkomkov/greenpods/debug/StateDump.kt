@@ -1,8 +1,13 @@
 package io.github.andrewkomkov.greenpods.debug
 
 import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticEvent
+import io.github.andrewkomkov.greenpods.core.model.AxisCalibration
+import io.github.andrewkomkov.greenpods.core.model.AxisVerdict
 import io.github.andrewkomkov.greenpods.core.model.BatteryComponent
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
+import io.github.andrewkomkov.greenpods.core.model.HeadAxis
+import io.github.andrewkomkov.greenpods.core.model.HeadCalibration
+import io.github.andrewkomkov.greenpods.core.model.PodModel
 import io.github.andrewkomkov.greenpods.core.model.PodState
 
 /**
@@ -24,13 +29,110 @@ object StateDump {
         diagnostics: List<DiagnosticEvent>,
         scanFailure: String?,
         version: String,
+        /** Everything stored, per model. Empty is a fact about the store, not a gap here. */
+        calibrations: List<HeadCalibration> = emptyList(),
+        /** Whose calibration is actually being applied, when anything is in range. */
+        connectedModel: PodModel? = null,
     ): String =
         obj(
             "version" to str(version),
             "scanFailure" to (scanFailure?.let(::str) ?: "null"),
             "pods" to array(pods.map(::pod)),
             "settings" to settings(settings),
+            "headCalibration" to headCalibration(calibrations, connectedModel),
             "diagnostics" to array(diagnostics.map(::diagnostic)),
+        )
+
+    /**
+     * What is stored per model, per axis, and which of it is in force (FR-027).
+     *
+     * **Every axis is always present**, and an unmeasured one reads `"verdict":
+     * "UNCALIBRATED"` rather than being absent — "never measured" and "the dump forgot it"
+     * are different facts, and a reader of a diagnostic has no way to tell them apart if the
+     * key is simply missing.
+     *
+     * The connected model is listed even when nothing is stored for it, because that is the
+     * one case where "uncalibrated" is worth saying out loud: it is the model whose angles are
+     * currently coming from the labelled approximation.
+     */
+    private fun headCalibration(
+        stored: List<HeadCalibration>,
+        connected: PodModel?,
+    ): String {
+        val models = (stored.map { it.model } + listOfNotNull(connected)).distinct()
+        return obj(
+            "connectedModel" to (connected?.name?.let(::str) ?: "null"),
+            "models" to
+                array(
+                    models.map { model ->
+                        val calibration =
+                            stored.firstOrNull { it.model == model } ?: HeadCalibration.uncalibrated(model)
+                        obj(
+                            "model" to str(model.name),
+                            "connected" to (model == connected).toString(),
+                            "measuredAtEpochMillis" to calibration.measuredAtEpochMillis.toString(),
+                            "axes" to
+                                obj(
+                                    *HeadAxis.entries
+                                        .map { axis ->
+                                            axis.name to axis(calibration.forAxis(axis), model == connected)
+                                        }.toTypedArray(),
+                                ),
+                        )
+                    },
+                ),
+        )
+    }
+
+    /**
+     * One axis: always a verdict, only sometimes a number.
+     *
+     * `applied` is the answer to the question the dump exists to settle — whether this axis is
+     * changing what the app reports right now — and it is false for every verdict that carries
+     * no usable scale, including an unconfirmed `SUSPECT`, because `appliedScale` is the single
+     * reader of that rule.
+     */
+    private fun axis(
+        calibration: AxisCalibration,
+        connected: Boolean,
+    ): String =
+        obj(
+            "verdict" to str(dumpName(calibration.verdict)),
+            "field" to (calibration.respondingField?.name?.let(::str) ?: "null"),
+            "degreesPerUnit" to
+                when (val verdict = calibration.verdict) {
+                    is AxisVerdict.Measured -> verdict.degreesPerUnit.toString()
+                    is AxisVerdict.Suspect -> verdict.degreesPerUnit.toString()
+                    else -> "null"
+                },
+            "detail" to
+                when (val verdict = calibration.verdict) {
+                    is AxisVerdict.NotHeld -> {
+                        str(verdict.reason)
+                    }
+
+                    is AxisVerdict.Suspect -> {
+                        str(verdict.why)
+                    }
+
+                    is AxisVerdict.Mismatched -> {
+                        str("expected ${verdict.expectedField.name}, ${verdict.respondingField.name} responded")
+                    }
+
+                    is AxisVerdict.Inconclusive -> {
+                        str(verdict.contenders.joinToString(",") { it.name })
+                    }
+
+                    is AxisVerdict.CrossCoupled -> {
+                        str(verdict.responses.entries.joinToString(",") { "${it.key.name}:${it.value}" })
+                    }
+
+                    else -> {
+                        "null"
+                    }
+                },
+            "applied" to (connected && calibration.appliedScale != null).toString(),
+            "measuredAtEpochMillis" to calibration.measuredAtEpochMillis.toString(),
         )
 
     private fun pod(pod: PodState): String =
@@ -139,13 +241,16 @@ object StateDump {
             "detail" to str(event.detail),
         )
 
-    private fun obj(vararg fields: Pair<String, String>): String =
+    // The three below are `internal` rather than private so `CalibrationDriver` can emit its
+    // export through the same escaping this file already trusts. A second JSON writer in the
+    // debug build would be a second thing to get wrong about quoting.
+    internal fun obj(vararg fields: Pair<String, String>): String =
         fields.joinToString(prefix = "{", postfix = "}") { (key, value) -> "${str(key)}:$value" }
 
-    private fun array(values: List<String>): String = values.joinToString(prefix = "[", postfix = "]")
+    internal fun array(values: List<String>): String = values.joinToString(prefix = "[", postfix = "]")
 
     /** Minimal JSON string escaping — enough for names, reasons and hex dumps. */
-    private fun str(value: String): String =
+    internal fun str(value: String): String =
         buildString {
             append('"')
             value.forEach { char ->

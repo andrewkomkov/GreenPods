@@ -23,9 +23,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.LoadingIndicator
@@ -77,6 +79,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun HeadGestureScreen(
     state: HeadGestureUiState,
+    onCalibrate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -97,6 +100,11 @@ fun HeadGestureScreen(
                 body = state.refusal.sentence(),
                 icon = Icons.Filled.Face,
             )
+            // Locked, not hidden (FR-002). Calibration reads the same stream, so it refuses
+            // for the same reason — and a person who cannot find the entry point at all
+            // concludes the app lost it, where one that explains itself tells them about
+            // their phone.
+            CalibrationEntry(locked = true, refusal = state.refusal, onCalibrate = onCalibrate)
             return@Column
         }
 
@@ -126,6 +134,63 @@ fun HeadGestureScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+
+        CalibrationEntry(locked = false, refusal = null, onCalibrate = onCalibrate)
+    }
+}
+
+/**
+ * The way into the calibration wizard.
+ *
+ * It lives here rather than in settings because this is the screen where the numbers are
+ * visibly wrong: someone watching the bars move too little for a full turn of their head is
+ * the person who wants to measure it, and they are already looking at the evidence.
+ *
+ * Shown in both states. When the stream cannot start there is nothing to calibrate against,
+ * and that is said with the same sentence the trainer above uses — one refusal, one wording.
+ */
+@Composable
+private fun CalibrationEntry(
+    locked: Boolean,
+    refusal: HeadTrackingController.Refusal?,
+    onCalibrate: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (locked) {
+        LockedCard(
+            modifier = modifier,
+            title = "Calibration can't run here either",
+            body = refusal.sentence(),
+            icon = Icons.Filled.Straighten,
+        )
+        return
+    }
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Straighten, contentDescription = null, Modifier.size(24.dp))
+                Text("Angles look wrong?", style = MaterialTheme.typography.titleMedium)
+            }
+            Text(
+                "The degrees above come from one shared constant that was never measured on " +
+                    "any accessory. Four short poses check it against your own head, and say " +
+                    "plainly when it cannot be checked.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FilledTonalButton(onClick = onCalibrate) { Text("Calibrate head tracking") }
+        }
     }
 }
 
@@ -290,8 +355,14 @@ private fun HeadGesture?.label(): String =
         null -> "Gesture"
     }
 
-/** Each refusal is a different situation, and only one of them is worth re-checking. */
-private fun HeadTrackingController.Refusal?.sentence(): String =
+/**
+ * Each refusal is a different situation, and only one of them is worth re-checking.
+ *
+ * `internal` because the calibration wizard refuses for exactly the same reasons — it reads
+ * the same stream — and two copies of these sentences would drift into telling a person two
+ * different things about one phone.
+ */
+internal fun HeadTrackingController.Refusal?.sentence(): String =
     when (this) {
         HeadTrackingController.Refusal.NO_ACCESSORY -> {
             "No earbuds in range. Open your case nearby and come back."

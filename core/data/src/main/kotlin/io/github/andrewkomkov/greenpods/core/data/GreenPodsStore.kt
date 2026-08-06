@@ -3,6 +3,8 @@ package io.github.andrewkomkov.greenpods.core.data
 import android.content.Context
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
+import io.github.andrewkomkov.greenpods.core.data.head.DataStoreHeadCalibrationStore
+import io.github.andrewkomkov.greenpods.core.data.head.HeadCalibrationStore
 import io.github.andrewkomkov.greenpods.core.data.settings.SettingsRepository
 import io.github.andrewkomkov.greenpods.core.data.transport.DataStoreHidServiceMemory
 import io.github.andrewkomkov.greenpods.core.data.transport.HidServiceMemory
@@ -28,6 +30,15 @@ class GreenPodsStore(
     val settings: SettingsRepository = SettingsRepository(store)
 
     val hidServices: HidServiceMemory = DataStoreHidServiceMemory(store)
+
+    /**
+     * Measured head-tracking scales, per accessory model.
+     *
+     * Here rather than constructed in the app module for the reason the whole class exists:
+     * a second `PreferenceDataStoreFactory` on the same file is a second writer, and DataStore
+     * serialises through one writer per file.
+     */
+    val headCalibrations: HeadCalibrationStore = DataStoreHeadCalibrationStore(store)
 
     private companion object {
         /** The name the settings store has always had; changing it would orphan settings. */

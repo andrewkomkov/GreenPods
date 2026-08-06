@@ -97,10 +97,11 @@ class HeadGestureTest {
     }
 
     @Test
-    fun `the pose mapper spans plus or minus 180 degrees across the raw range`() {
+    fun `the uncalibrated pose mapper spans plus or minus 180 degrees across the raw range`() {
         val zero: Short = 0
-        val level = HeadPoseMapper.toPose(HeadTrackingSample(zero, zero, zero, zero, zero))
-        val extreme = HeadPoseMapper.toPose(HeadTrackingSample(Short.MAX_VALUE, zero, zero, zero, zero))
+        val mapper = HeadPoseMapper.Uncalibrated
+        val level = mapper.toPose(HeadTrackingSample(zero, zero, zero, zero, zero))
+        val extreme = mapper.toPose(HeadTrackingSample(Short.MAX_VALUE, zero, zero, zero, zero))
 
         level shouldBe HeadPose.Level
         (abs(extreme.yawDegrees - 180f) < 0.01f) shouldBe true

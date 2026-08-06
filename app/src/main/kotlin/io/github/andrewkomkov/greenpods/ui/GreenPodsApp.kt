@@ -58,6 +58,8 @@ import io.github.andrewkomkov.greenpods.feature.pods.HeartRateScreen
 import io.github.andrewkomkov.greenpods.feature.pods.HeartRateUi
 import io.github.andrewkomkov.greenpods.feature.pods.PodsScreen
 import io.github.andrewkomkov.greenpods.feature.pods.PodsViewModel
+import io.github.andrewkomkov.greenpods.feature.settings.HeadCalibrationScreen
+import io.github.andrewkomkov.greenpods.feature.settings.HeadCalibrationViewModel
 import io.github.andrewkomkov.greenpods.feature.settings.HeadGestureScreen
 import io.github.andrewkomkov.greenpods.feature.settings.HeadGestureViewModel
 import io.github.andrewkomkov.greenpods.feature.settings.SettingsScreen
@@ -98,6 +100,7 @@ fun GreenPodsApp(
     // place they can go without a reading to look at.
     val onHeartRate = current?.hierarchy?.any { it.route == HEART_RATE_ROUTE } == true
     val onHeadGestures = current?.hierarchy?.any { it.route == HEAD_GESTURES_ROUTE } == true
+    val onHeadCalibration = current?.hierarchy?.any { it.route == HEAD_CALIBRATION_ROUTE } == true
 
     /**
      * Anything that is not one of the toolbar's destinations was pushed on top of one, and
@@ -122,6 +125,10 @@ fun GreenPodsApp(
 
             onHeadGestures -> {
                 "Head gestures"
+            }
+
+            onHeadCalibration -> {
+                "Calibration"
             }
 
             else -> {
@@ -268,7 +275,32 @@ fun GreenPodsApp(
                 ) {
                     val viewModel: HeadGestureViewModel = viewModel(factory = GreenPodsViewModels.headGestures())
                     val state by viewModel.state.collectAsStateWithLifecycle()
-                    HeadGestureScreen(state = state)
+                    HeadGestureScreen(
+                        state = state,
+                        onCalibrate = {
+                            navController.navigate(HEAD_CALIBRATION_ROUTE) { launchSingleTop = true }
+                        },
+                    )
+                }
+
+                composable(
+                    HEAD_CALIBRATION_ROUTE,
+                    enterTransition = { slideInHorizontally(slide) { it / SHARED_AXIS_FRACTION } + fadeIn(fade) },
+                    popExitTransition = { slideOutHorizontally(slide) { it / SHARED_AXIS_FRACTION } + fadeOut(fade) },
+                ) {
+                    val viewModel: HeadCalibrationViewModel =
+                        viewModel(factory = GreenPodsViewModels.headCalibration())
+                    val state by viewModel.state.collectAsStateWithLifecycle()
+                    HeadCalibrationScreen(
+                        state = state,
+                        onStart = viewModel::start,
+                        onBeginHold = viewModel::beginHold,
+                        onSkip = viewModel::skip,
+                        onRepeat = viewModel::repeat,
+                        onConfirmSuspect = viewModel::confirmSuspect,
+                        onSave = viewModel::save,
+                        onAbandon = viewModel::abandon,
+                    )
                 }
 
                 composable(GreenPodsDestination.SETTINGS.route) {
@@ -362,6 +394,14 @@ private const val HEART_RATE_ROUTE = "heart-rate"
 
 /** Not a tab either: the gesture trainer, pushed from the head-gesture settings. */
 private const val HEAD_GESTURES_ROUTE = "head-gestures"
+
+/**
+ * The calibration wizard, pushed from the trainer.
+ *
+ * Deeper than the trainer on purpose: it is reached from the screen where the angles can be
+ * seen to be wrong, which is the moment anybody wants to measure them.
+ */
+private const val HEAD_CALIBRATION_ROUTE = "head-calibration"
 
 /** A fade through starts slightly small, so peers cross-dissolve with a little life. */
 private const val FADE_THROUGH_SCALE = 0.92f
