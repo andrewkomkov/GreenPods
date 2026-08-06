@@ -290,6 +290,51 @@ class HeartRateControllerTest {
         }
 
     @Test
+    fun `a reading that stops arriving is withdrawn rather than left on screen`() =
+        runTest {
+            // The bug this pins, seen on hardware 2026-08-06: the stall check only ran
+            // while a session was settling, so once it reached Measuring nothing ever
+            // asked whether reports were still arriving. The sensor stopped in the
+            // earbuds and the last BPM stayed on the card indefinitely — a stale number
+            // shown as current, which is the one outcome this feature must not produce.
+            val harness = Harness()
+            harness.start(this)
+            harness.describeServices()
+            harness.report(72, 200)
+            harness.state.shouldBeInstanceOf<HeartRateState.Measuring>()
+
+            // One late report is jitter, not a stall. The number must survive it.
+            harness.nowMillis += 3_000
+            harness.tick()
+            harness.state.shouldBeInstanceOf<HeartRateState.Measuring>()
+
+            // Silence long enough to mean the stream has stopped.
+            harness.nowMillis += 3_000
+            harness.tick()
+
+            harness.state.shouldBeInstanceOf<HeartRateState.Uncertain>()
+            harness.state.trustedReading shouldBe null
+        }
+
+    @Test
+    fun `a reading that keeps arriving is not withdrawn`() =
+        runTest {
+            // The other half: a live session must not have its number taken away just
+            // because time passed. Without this, the fix above would trade a frozen
+            // reading for a flickering one.
+            val harness = Harness()
+            harness.start(this)
+            harness.describeServices()
+
+            repeat(4) {
+                harness.report(72, 200)
+                harness.nowMillis += 1_000
+                harness.tick()
+                harness.state.shouldBeInstanceOf<HeartRateState.Measuring>()
+            }
+        }
+
+    @Test
     fun `a sensor that never converges gives up after thirty seconds and stops`() =
         runTest {
             val harness = Harness()
