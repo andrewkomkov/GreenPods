@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Headphones
@@ -37,7 +36,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -204,13 +202,13 @@ fun GreenPodsApp(
             NavHost(
                 navController = navController,
                 startDestination = GreenPodsDestination.PODS.route,
-                // Bottom room for the floating bar. Reserved here, once, rather than in five
-                // screens' content padding — a screen that forgot would put its last control
-                // under the toolbar, which is the failure this shape invites.
+                // No bottom inset here. The screens leave the room themselves, in their
+                // own content padding, so their content keeps running underneath the
+                // floating bar instead of stopping above it — see
+                // `GreenPodsSpacing.FloatingBarSpace`.
                 modifier =
                     Modifier
                         .padding(padding)
-                        .padding(bottom = FLOATING_BAR_SPACE)
                         .consumeWindowInsets(padding),
                 enterTransition = { fadeIn(fade) + scaleIn(scale, initialScale = FADE_THROUGH_SCALE) },
                 exitTransition = { fadeOut(fade) },
@@ -322,15 +320,13 @@ fun GreenPodsApp(
                     Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(bottom = 12.dp)
-                        .shadow(FLOATING_BAR_ELEVATION, CircleShape, clip = false),
-                // Standard rather than vibrant, and lifted off the page.
-                //
-                // The vibrant container is a solid slab of colour the width of the bar; on
-                // a page this pale it reads as a background stuck behind the buttons rather
-                // than as something floating over them. A quieter container plus a shadow
-                // is what actually says "this is above the content" — the shadow is the
-                // part that does the work, and the vibrant fill was standing in for it.
+                        .padding(bottom = 12.dp),
+                // A container is fine — a floating bar is allowed to be a solid thing.
+                // What made it read as a panel rather than as something floating was never
+                // its colour: the content stopped above it, so there was nothing for it to
+                // float *over*. With the screens' content now running underneath, the
+                // container reads as it should. Standard rather than vibrant, because the
+                // vibrant fill was doing work the overlap should have been doing.
                 colors = FloatingToolbarDefaults.standardFloatingToolbarColors(),
             ) {
                 GreenPodsDestination.entries.forEach { destination ->
@@ -365,11 +361,5 @@ private const val HEAD_GESTURES_ROUTE = "head-gestures"
 /** A fade through starts slightly small, so peers cross-dissolve with a little life. */
 private const val FADE_THROUGH_SCALE = 0.92f
 
-/** Enough to read as lifted off the page without casting a slab of shadow. */
-private val FLOATING_BAR_ELEVATION = 6.dp
-
 /** A shared axis travels a fraction of the width, not all of it — this is a push, not a page turn. */
 private const val SHARED_AXIS_FRACTION = 5
-
-/** Room kept under every screen so the floating bar never covers a control. */
-private val FLOATING_BAR_SPACE = 92.dp

@@ -48,6 +48,7 @@ import io.github.andrewkomkov.greenpods.core.designsystem.component.LockedSurfac
 import io.github.andrewkomkov.greenpods.core.designsystem.component.SectionCard
 import io.github.andrewkomkov.greenpods.core.designsystem.component.SegmentedChoice
 import io.github.andrewkomkov.greenpods.core.designsystem.component.SwitchRow
+import io.github.andrewkomkov.greenpods.core.designsystem.theme.GreenPodsSpacing
 import io.github.andrewkomkov.greenpods.core.model.GestureAction
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.HeadGesture
@@ -86,7 +87,14 @@ fun SettingsScreen(
     onDeleteHealthRecords: () -> Unit = {},
 ) {
     Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier =
+            modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+                // Content runs under the floating bar; this is what keeps the
+                // last control reachable above it.
+                .padding(bottom = GreenPodsSpacing.FloatingBarSpace),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         EarDetectionSection(

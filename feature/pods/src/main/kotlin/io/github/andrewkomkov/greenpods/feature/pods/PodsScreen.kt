@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import io.github.andrewkomkov.greenpods.core.designsystem.component.BatteryRing
 import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilitySummary
 import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilityUi
+import io.github.andrewkomkov.greenpods.core.designsystem.theme.GreenPodsSpacing
 import io.github.andrewkomkov.greenpods.core.model.PodFeature
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.WearState
@@ -61,7 +62,7 @@ fun PodsScreen(
             onRequestPermission = onRequestPermission,
             onOpenBluetoothSettings = onOpenBluetoothSettings,
             onRetryScan = onRetryScan,
-            modifier = modifier.fillMaxSize(),
+            modifier = modifier.fillMaxSize().padding(bottom = GreenPodsSpacing.FloatingBarSpace),
         )
         return
     }
@@ -69,7 +70,13 @@ fun PodsScreen(
     LazyColumn(
         modifier = modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(vertical = 16.dp),
+        // Bottom room for the floating bar, in the *content* so cards keep running
+        // underneath it rather than stopping above it.
+        contentPadding =
+            PaddingValues(
+                top = 16.dp,
+                bottom = 16.dp + GreenPodsSpacing.FloatingBarSpace,
+            ),
     ) {
         items(state.pods, key = PodState::address) { pod ->
             PodCard(
