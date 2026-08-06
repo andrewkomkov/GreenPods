@@ -3,6 +3,7 @@
 package io.github.andrewkomkov.greenpods.core.designsystem.component
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.ButtonGroupDefaults
@@ -14,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 
 /**
  * One choice out of a few, as a connected button group.
@@ -75,7 +77,12 @@ fun <T> SegmentedChoice(
                 // hides what it does is worse than an uneven one. Segments of unequal
                 // width still read as one control; a truncated label does not read at all.
                 modifier = Modifier.weight(text.length.coerceAtLeast(MIN_WEIGHT).toFloat()),
-                contentPadding = ToggleButtonDefaults.ContentPadding,
+                // Tighter than the default. A four-position group of ordinary English
+                // words does not fit a phone at the default padding: "Off" was allotted
+                // about a ninth of the row, almost all of which the padding took, and the
+                // label rendered as a bare ellipsis. Two buttons on this screen said "…",
+                // which is a control that has stopped being one.
+                contentPadding = SegmentPadding,
             ) {
                 Text(
                     text,
@@ -90,5 +97,13 @@ fun <T> SegmentedChoice(
     }
 }
 
-/** Below this, a short label like "Off" would be squeezed thinner than its own padding. */
-private const val MIN_WEIGHT = 4
+/**
+ * Below this, a short label like "Off" would be squeezed thinner than its own padding.
+ *
+ * Raised from 4 to 7: the floor has to be a share of the row that can still hold three
+ * characters *and* the padding, and 4 was measured against the text alone.
+ */
+private const val MIN_WEIGHT = 7
+
+/** Just enough to keep the label off the edge; the group is what carries the shape. */
+private val SegmentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
