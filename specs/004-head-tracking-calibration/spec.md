@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-05
 
-**Status**: Draft
+**Status**: Amended 2026-08-06 — see "Why This Exists"
 
 **Input**: User description: "Мастер калибровки head tracking. Экран в приложении, который ведёт пользователя через размеченные позы головы («смотри прямо», «подбородок к плечу», «ухо к плечу»), удерживает отсчёт, ловит плато в потоке ориентации и выводит масштаб отдельно для каждой оси — вместо одной общей константы HeadPoseMapper.SCALE. Обоснование из живой съёмки на AirPods Pro 3 (Pixel 8, Android 17, 2876 сэмплов за 143 с): поля прошли очень разные диапазоны — o1 6296 единиц, o2 35585, o3 12175, что при текущей общей SCALE даёт 195° наклона головой, физически невозможных. Значит либо оси назначены не тем полям, либо у осей разный масштаб. Мастер должен также проверять назначение осей, а не только выводить числа, и честно сообщать, когда данных не хватает для вывода (неудержанная поза, отсутствие плато)."
 
@@ -12,27 +12,51 @@
 
 Head tracking currently converts the accessory's raw orientation integers to degrees
 with one shared constant applied to all three axes. That constant is documented in the
-code as an approximation, and a live capture has now shown it cannot be correct in any
-form.
+code as an approximation, and it is not one that can be repaired by choosing a better
+number.
 
-**The evidence** (Pixel 8, Android 17, AirPods Pro 3, 2 876 samples over 143 s of free
-head movement, 2026-08-05):
+### The original justification, and why it was withdrawn
 
-| Raw field | Currently read as | Range observed | In degrees at the shared scale |
-|---|---|---|---|
-| `o1` | yaw | 6 296 units | 35° |
-| `o2` | pitch | 35 585 units | **195°** |
-| `o3` | roll | 12 175 units | 67° |
+This spec was first written on 2026-08-05 around a capture that showed `o2` traversing
+35 585 units — 195° of pitch at the shared scale, which no neck can perform. Hours later,
+PR #6 explained that number and removed it as evidence: the decoder was reading the pose at
+**absolute packet offsets**, and the `0x17` body is protobuf whose sequence-counter varint
+grows from one byte to two at 127→128, shifting the input report — and everything after it —
+partway through every stream. Half of those reads straddled two adjacent values. The 195°
+was an artefact of where the bytes were read, not of how they were scaled. That is fixed,
+and `HeadTrackingOffsetTest` pins it against four captured frames spanning the boundary.
 
-No neck pitches through 195°. And yaw — the axis a person sweeps furthest when looking
-around — came out the narrowest of the three. So either the axes are assigned to the
-wrong fields, or the axes do not share one scale, or both.
+The original table is left out of this section deliberately rather than corrected in place.
+It measured a bug, and a number that has been explained by something else does not become
+weaker evidence for its original claim — it stops being evidence for it at all.
 
-The same capture also showed why this cannot be settled from a terminal: the session
-contained 21 steady plateaus, none of them labelled. Without knowing which plateau was a
-90° turn, any constant derived from it is a fitted number, not a measurement — which
-Principle V forbids. Labelling a pose requires asking the person wearing the earbuds, at
-the moment they are holding it. That is what this feature is for.
+### What actually justifies the feature
+
+**The three values do not vary independently.** From a scripted capture — nod, then shake,
+then tilt, separated by stillness — nodding moved offsets 24 and 22, shaking moved 22 most,
+and tilting moved 24 and 20. No offset belongs to one axis
+(`docs/protocol-research.md:520-528`). A per-axis linear scale is therefore not a constant
+that is wrong; it is a *model* that does not fit. The obvious alternative was tried and
+rejected too: four consecutive int16 at offsets 26/28/30/32 hold a near-constant norm, but
+converting them to Euler angles does not make nodding move pitch.
+
+And the accessory will not settle it either. The devmotion descriptor declares report 1 as a
+timestamp followed by one opaque vendor blob, with no Logical or Physical range and no unit
+(verified byte by byte). `HidReportDescriptor` already honours a declared range where one
+exists — the heart-rate service declares one and it is pinned by a test. This service
+declares nothing.
+
+**So the gap is not a constant. It is a measurement nobody has taken.** Every capture in
+this project is unlabelled: values were recorded while a head moved, with no record of what
+the head was doing. The cross-coupling claim above is itself unpinned prose, written from one
+scripted session that no fixture reproduces. Deriving anything from an unlabelled plateau is
+fitting, not measuring, which Principle V forbids — and labelling a pose means asking the
+person wearing the earbuds, at the moment they are holding it.
+
+That is what this feature is for: **to produce the first labelled head-tracking capture**,
+and to report what each pose actually moved. A per-axis scale is emitted only where the poses
+genuinely separate the raw fields. On present evidence they will not, and the wizard will say
+so — which is a result, not a failure, and is the outcome this spec now expects.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -138,8 +162,10 @@ axis.
 
 - **FR-008**: The wizard MUST detect, from the orientation stream alone, the segment during which the values were held steady — it MUST NOT assume the person obeyed the countdown exactly.
 - **FR-009**: A segment MUST count as held only when every axis stays within a stated tolerance for at least a stated minimum duration.
-- **FR-010**: The wizard MUST derive each axis's scale from the difference between a pose's held values and the neutral reference pose's held values, not from absolute values.
-- **FR-011**: The wizard MUST derive and store a scale per axis independently. It MUST NOT apply one axis's result to another.
+- **FR-010**: The wizard MUST measure, for every pose, the response of **every** raw field as the difference between that pose's held values and the neutral reference pose's held values, never from absolute values. The full response set — not only the largest — MUST be recorded and exportable.
+- **FR-010a**: The wizard MUST derive a scale for an axis **only where one field's response to that axis's pose dominates the others** by a stated margin. Where no field dominates, or where the same fields respond to every pose, the wizard MUST report the axes as cross-coupled and MUST NOT store a scale. *On the evidence in `docs/protocol-research.md` this is the expected outcome on AirPods Pro 3, not an error path.*
+- **FR-011**: Where a scale is derived, it MUST be derived and stored per axis independently. It MUST NOT apply one axis's result to another.
+- **FR-011a**: Where an accessory's HID report descriptor declares a physical range and unit for an orientation field, that declaration MUST take precedence over any stored calibration. The accessory describing itself outranks a measurement inferred from a person holding a pose.
 - **FR-012**: The wizard MUST report, for each pose, which raw field responded most strongly to that pose.
 - **FR-013**: When the responding field for a pose is not the field currently mapped to that axis, the wizard MUST report the mismatch and MUST NOT store a scale for that axis as though the mapping were confirmed.
 - **FR-014**: When two or more fields respond comparably to one pose, the wizard MUST report that pose as inconclusive.
@@ -170,7 +196,8 @@ axis.
 
 **Purity (Principle III)**
 
-- **FR-030**: The plateau detection and the scale derivation MUST be free of I/O and of Android dependencies, and MUST be unit-tested off-device against captured sample sequences, including the 2026-08-05 capture that motivated this feature.
+- **FR-030**: The plateau detection and the scale derivation MUST be free of I/O and of Android dependencies, and MUST be unit-tested off-device against sample sequences that are **declared synthetic where they are synthetic**, plus the real captured frames in `head-tracking-varint-boundary.txt` for anything touching the decode path.
+- **FR-030a**: A run of the wizard MUST be able to emit a labelled sample series as a checked-in fixture, in the style of `hr-report-series.txt`, carrying a provenance header naming device, firmware, host, date, service and rate. *The capture this spec was originally written around is not in the repository and was taken through the decoder bug described above; no command in the app can currently produce a replacement. This feature is the instrument that closes that gap, which is why its own tests may not depend on a capture predating it.*
 
 ### Key Entities
 
@@ -184,8 +211,9 @@ axis.
 ### Measurable Outcomes
 
 - **SC-001**: A person can complete the full wizard in under three minutes, including reading the instructions.
-- **SC-002**: After calibration, a deliberate quarter-turn of the head is reported within 15° of a right angle, where the uncalibrated app is wrong by more than double that.
-- **SC-003**: After calibration, no axis reports an angle beyond what a human neck can reach — in particular, the 195° pitch range the motivating capture produced does not recur.
+- **SC-002**: *Conditional on the axes separating.* Where the wizard derives scales, a deliberate quarter-turn of the head is afterwards reported within 15° of a right angle, where the uncalibrated app is wrong by more than double that.
+- **SC-003**: *Conditional on the axes separating.* Where scales are stored, no axis reports an angle beyond what a human neck can reach.
+- **SC-003a**: Where the axes do **not** separate, the wizard says so, names the fields that responded to each pose, stores no scale, and leaves the labelled capture behind. This is a success, not a failure: it converts a claim currently resting on one unreproducible session into an artefact anyone can re-run, and it is the outcome present evidence predicts.
 - **SC-004**: When a pose is deliberately not held, the wizard reports that pose as unusable in 100% of attempts and emits no number for it.
 - **SC-005**: Every outcome the wizard can reach is reproducible from adb with injected samples alone, with no earbuds present.
 - **SC-006**: A person who reads only the final screen can tell which axes were measured, which were not, and why — without opening diagnostics.
