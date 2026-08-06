@@ -1,6 +1,11 @@
 package io.github.andrewkomkov.greenpods
 
+import android.Manifest
 import android.app.Application
+import android.app.NotificationManager
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import io.github.andrewkomkov.greenpods.core.bluetooth.ble.PodScanner
 import io.github.andrewkomkov.greenpods.core.data.GreenPodsStore
 import io.github.andrewkomkov.greenpods.core.data.PodRepository
@@ -13,6 +18,8 @@ import io.github.andrewkomkov.greenpods.core.data.health.AndroidHealthStoreClien
 import io.github.andrewkomkov.greenpods.core.data.health.HealthConnectLink
 import io.github.andrewkomkov.greenpods.core.data.heartrate.AndroidGattHeartRateSource
 import io.github.andrewkomkov.greenpods.core.data.heartrate.HeartRateController
+import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityGate
+import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityPlatform
 import io.github.andrewkomkov.greenpods.core.data.settings.SettingsRepository
 import io.github.andrewkomkov.greenpods.core.data.transport.AndroidAapProbe
 import io.github.andrewkomkov.greenpods.core.data.transport.BondedPodIdentity
@@ -44,6 +51,34 @@ class GreenPodsApplication : Application() {
     private val store: GreenPodsStore by lazy { GreenPodsStore(this) }
 
     val settingsRepository: SettingsRepository get() = store.settings
+
+    /**
+     * Whether this phone can show the live status surface, and why not when it cannot.
+     *
+     * In the container rather than in the service because the settings screen and the adb
+     * surface both need the same answer, and two places computing it independently is how
+     * a user ends up being told two different reasons for one thing.
+     */
+    val liveActivityGate: LiveActivityGate by lazy {
+        LiveActivityGate(
+            object : LiveActivityPlatform {
+                override val apiLevel: Int get() = Build.VERSION.SDK_INT
+
+                override fun notificationsPermitted(): Boolean =
+                    ContextCompat.checkSelfPermission(
+                        this@GreenPodsApplication,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) == PackageManager.PERMISSION_GRANTED
+
+                override fun promotedNotificationsPermitted(): Boolean =
+                    if (Build.VERSION.SDK_INT >= LiveActivityGate.MIN_SDK) {
+                        getSystemService(NotificationManager::class.java).canPostPromotedNotifications()
+                    } else {
+                        false
+                    }
+            },
+        )
+    }
 
     /**
      * What each accessory has said about its own sensor services.

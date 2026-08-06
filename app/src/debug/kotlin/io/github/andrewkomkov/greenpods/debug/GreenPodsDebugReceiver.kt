@@ -9,6 +9,12 @@ import io.github.andrewkomkov.greenpods.core.bluetooth.aap.AapEvent
 import io.github.andrewkomkov.greenpods.core.bluetooth.aap.HiddenApiAccess
 import io.github.andrewkomkov.greenpods.core.bluetooth.ble.AppleBeaconDecoder
 import io.github.andrewkomkov.greenpods.core.bluetooth.ble.PodSighting
+import io.github.andrewkomkov.greenpods.core.data.live.ControlState
+import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityDecision
+import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityGate
+import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityPolicy
+import io.github.andrewkomkov.greenpods.core.data.live.SensingState
+import io.github.andrewkomkov.greenpods.core.model.LiveActivityAvailability
 import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.ScanMode
@@ -89,6 +95,10 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                 hid(app)
             }
 
+            "live" -> {
+                live(app)
+            }
+
             "hr" -> {
                 heartRate(app, intent.getStringExtra("value").orEmpty())
             }
@@ -104,7 +114,7 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
             else -> {
                 reply(
                     "unknown command '$command'. Known: dump, probe, set, inject, monitor, clear, " +
-                        "hiddenapi, anc, raw, hid, hr, health. See docs/adb.md",
+                        "hiddenapi, anc, raw, hid, live, hr, health. See docs/adb.md",
                 )
             }
         }
@@ -311,6 +321,99 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
     private fun hex(bytes: ByteArray): String = bytes.joinToString(" ") { "%02X".format(it) }
 
     /**
+     * Prints what the live status surface would show, and why it would not.
+     *
+     * **Prints no heart rate.** `sensing=DISCLOSED valueShown=true` says the surface would
+     * carry a number; it never says which. That looks inconsistent with allowing the value
+     * on a lock screen and is not: FR-023 forbids a reading in any diagnostic path, and
+     * this output is the most diagnostic thing in the app — people paste it into bug
+     * reports. A lock screen shows a user their own body's data; this does not.
+     */
+    private fun live(app: GreenPodsApplication) {
+        app.applicationScope.launch {
+            val pod = app.awaitPods(DEFAULT_WAIT_MILLIS).firstOrNull()
+            val settings = app.settingsRepository.settings.first()
+            val availability = app.liveActivityGate.availability()
+
+            val decision =
+                LiveActivityPolicy().decide(
+                    availability = availability,
+                    settings = settings,
+                    pod = pod,
+                    monitoring = true,
+                    nowEpochMillis = System.currentTimeMillis(),
+                )
+
+            val name =
+                when (availability) {
+                    is LiveActivityAvailability.PlatformTooOld -> "PLATFORM_TOO_OLD"
+                    LiveActivityAvailability.PromotionRefused -> "PROMOTION_REFUSED"
+                    LiveActivityAvailability.NotificationsDenied -> "NOTIFICATIONS_DENIED"
+                    is LiveActivityAvailability.NotPromotable -> "NOT_PROMOTABLE"
+                    LiveActivityAvailability.Available -> "AVAILABLE"
+                }
+            val reason =
+                when (availability) {
+                    is LiveActivityAvailability.PlatformTooOld -> {
+                        "API ${availability.apiLevel}, needs ${LiveActivityGate.MIN_SDK}"
+                    }
+
+                    LiveActivityAvailability.PromotionRefused -> {
+                        "promoted notifications are off for this app"
+                    }
+
+                    LiveActivityAvailability.NotificationsDenied -> {
+                        "notification permission not granted"
+                    }
+
+                    is LiveActivityAvailability.NotPromotable -> {
+                        availability.reason
+                    }
+
+                    LiveActivityAvailability.Available -> {
+                        "none"
+                    }
+                }
+
+            when (decision) {
+                is LiveActivityDecision.Withhold -> {
+                    reply("live: availability=$name reason=\"$reason\" posted=false withheld=${decision.reason}")
+                }
+
+                is LiveActivityDecision.Post -> {
+                    val summary = decision.summary
+                    reply("live: availability=$name reason=\"$reason\" posted=true")
+                    reply("live: accessory=\"${summary.accessoryName}\" presence=${summary.presence}")
+                    reply(
+                        "live: battery left=${percent(summary.leftPercent)} " +
+                            "right=${percent(summary.rightPercent)} case=${percent(summary.casePercent)} " +
+                            "charging=${summary.charging}",
+                    )
+                    reply("live: wear left=${summary.wear.left} right=${summary.wear.right}")
+                    reply(
+                        when (val control = summary.noiseControl) {
+                            is ControlState.Offered -> "live: noiseControl=OFFERED mode=${control.mode ?: "unknown"}"
+                            is ControlState.Locked -> "live: noiseControl=LOCKED reason=\"${control.reason}\""
+                        },
+                    )
+                    reply(
+                        when (summary.sensing) {
+                            SensingState.Idle -> "live: sensing=IDLE"
+
+                            SensingState.Disclosed -> "live: sensing=DISCLOSED valueShown=false"
+
+                            // The value itself is deliberately absent — see the note above.
+                            is SensingState.DisclosedWithRate -> "live: sensing=DISCLOSED valueShown=true"
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    private fun percent(value: Int?): String = value?.let { "$it%" } ?: "unknown"
+
+    /**
      * Turns heart-rate sensing on or off, or prints what it is doing.
      *
      * **Prints no value, ever.** Not here, not in `dump`, not in a diagnostic. The
@@ -484,12 +587,27 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                         )
                     }
 
+                    "liveActivityEnabled" -> {
+                        current.copy(liveActivityEnabled = on)
+                    }
+
+                    "liveActivityShowHeartRate" -> {
+                        current.copy(liveActivityShowHeartRate = on)
+                    }
+
                     else -> {
                         current
                     }
                 }
             }
-            reply("set $key=$value")
+            // An unknown key used to answer "set foo=bar" and change nothing, which is
+            // indistinguishable from success — and cost exactly that: a setting reported as
+            // applied while the surface carried on ignoring it. Say so instead.
+            if (key in KNOWN_SETTING_KEYS) {
+                reply("set $key=$value")
+            } else {
+                reply("set: unknown key '$key'. Known: ${KNOWN_SETTING_KEYS.joinToString()}")
+            }
         }
     }
 
@@ -603,6 +721,30 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
          * for an accessory that was about to describe itself.
          */
         const val DESCRIBE_WAIT_MILLIS = 3_000L
+
+        /**
+         * Every key `set` actually acts on.
+         *
+         * Listed rather than derived because the `when` above is the only other place that
+         * knows, and a key present in one and missing from the other is precisely the bug
+         * this exists to catch.
+         */
+        val KNOWN_SETTING_KEYS =
+            listOf(
+                "autoPause",
+                "autoResume",
+                "pauseOnlyWhenBothOut",
+                "backgroundMonitoring",
+                "lowBatteryWarning",
+                "lowBatteryThreshold",
+                "scanMode",
+                "headGestures",
+                "hrIntervalMs",
+                "hrConfidenceThreshold",
+                "hrHealthConnect",
+                "liveActivityEnabled",
+                "liveActivityShowHeartRate",
+            )
 
         /** The window `health count` looks back over when none is given. */
         const val DEFAULT_HEALTH_WINDOW_MINUTES = 10L

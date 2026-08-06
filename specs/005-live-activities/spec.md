@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-05
 
-**Status**: Draft
+**Status**: Clarified — ready for planning
 
 **Input**: User description: "Live Activities for GreenPods — a persistent, glanceable surface on the lock screen and status bar that shows what the earbuds are doing right now, using Android's Live Updates (promoted ongoing notifications, Android 16+). Candidate content: per-bud and case battery, in-ear state, current noise-control mode, and an active heart-rate session. Must degrade honestly on older Android where the API does not exist, and must not show a feature the transport gate has locked. Note the project already runs a foreground monitoring service with an ongoing notification, so this is an upgrade of that surface rather than a new one, and heart rate has a standing rule that no reading appears in any diagnostic path."
 
@@ -152,7 +152,8 @@ and still discloses that monitoring runs.
 #### The surface
 
 - **FR-001**: The system MUST present a persistent, glanceable status surface for the
-  connected accessory while monitoring is running and the platform supports one.
+  connected accessory for as long as monitoring is running and the platform supports one —
+  not only when something noteworthy is happening. (Resolved 2026-08-06 — see Q2.)
 - **FR-002**: The surface MUST show left bud, right bud and case battery, and MUST
   distinguish "unknown" from any numeric level.
 - **FR-003**: The surface MUST show the accessory's wear state.
@@ -173,9 +174,12 @@ and still discloses that monitoring runs.
   attached, not hidden.
 - **FR-013**: The system MUST NOT report a control's new value until the accessory has
   confirmed it.
-- **FR-014**: Where the platform provides no promoted live surface, the system MUST keep
-  the existing ongoing notification behaviour unchanged, and MUST state in settings why the
-  richer surface is unavailable.
+- **FR-014**: Where the platform provides no promoted live surface, the system MUST leave
+  the existing ongoing notification exactly as it is today. No fallback layout is built and
+  no existing behaviour changes. (Resolved 2026-08-06 — see Q3.)
+- **FR-014a**: Those phones MUST still be told why, in settings, with the same shape of
+  reason a locked transport carries. "Nothing new" is a scope decision; it is not licence
+  to leave a user unable to tell a missing feature from a broken one.
 
 #### Heart rate
 
@@ -184,8 +188,12 @@ and still discloses that monitoring runs.
 - **FR-016**: The disclosure MUST offer a control that stops sensing in the accessory
   itself, not only in the app.
 - **FR-017**: When no session is running, the surface MUST make no mention of heart rate.
-- **FR-018**: The surface MUST NOT display a heart-rate value on a lock screen unless the
-  user has explicitly chosen to allow it. [NEEDS CLARIFICATION: see Q1]
+- **FR-018**: The surface MUST display the current heart rate while a session is active,
+  including on the lock screen. A setting MUST exist to hide the value while keeping the
+  disclosure, and the value MUST be shown by default. (Resolved 2026-08-06 — see Q1.)
+- **FR-018a**: Hiding the value MUST NOT hide the disclosure. FR-015 is an obligation and
+  is not subject to the same setting: a user may choose not to display their heart rate,
+  and may not choose to have the sensor run without saying so.
 
 #### Control and observability
 
@@ -218,7 +226,9 @@ and still discloses that monitoring runs.
 - **SC-004**: On a phone that cannot present the richer surface, a user can state why from
   what the app tells them — and monitoring still works exactly as before.
 - **SC-005**: A user with an active heart-rate session can tell that sensing is running,
-  and stop it, without opening the app.
+  read their current rate, and stop it, without opening the app.
+- **SC-005a**: A user who has hidden the value can still tell that sensing is running, and
+  still stop it.
 - **SC-006**: No surface shows a locked feature as available, and no control reports a
   change the accessory has not confirmed.
 - **SC-007**: Every behaviour above is reproducible from `adb` on a device with no
@@ -240,38 +250,53 @@ and still discloses that monitoring runs.
 - No new permission is introduced. Where notification permission is denied the surface is
   simply absent, and the existing disclosure rules continue to apply.
 
-## Open Questions
+## Decisions
 
-### Q1: May a heart-rate reading appear on a surface visible without unlocking?
+Resolved by the project owner, 2026-08-06. Recorded with their consequences, because two
+of the three narrow the feature and one widens what it exposes.
 
-**Context**: FR-018. The project has a standing rule that no heart-rate reading appears in
-any diagnostic path, because those get pasted into bug reports. A lock screen is not a
-diagnostic path, but it is readable by anyone holding the phone.
+### D1: The heart rate is shown, lock screen included — FR-018
 
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A | Never show a value here — disclose the session only | Safest and consistent with the existing rule; a user wanting a live number opens the app |
-| B | Show it behind an explicit opt-in, off by default | Useful mid-workout; puts a health measurement in front of bystanders unless the user has thought about it |
-| C | Show it only while unlocked, hide it on the lock screen | Best of both, but relies on the platform distinguishing those states reliably |
+**Decided: yes.** While a session is active the current reading appears on the surface,
+without unlocking. A setting hides the value for anyone who would rather it did not; it is
+on by default.
 
-### Q2: Permanent, or only when something is happening?
+The concern that prompted the question stands and is not withdrawn: a lock screen is
+readable by whoever picks the phone up, and this is a health measurement. What the existing
+"no reading in any diagnostic path" rule protects is logs pasted into bug reports, and it
+does not reach this case — a user choosing to display their own heart rate to themselves is
+not the same act as a number leaking into a file they forward to a stranger. The rule is
+unchanged and still binds every diagnostic path, including `dump`, `hr status` and the
+frame log.
 
-**Context**: FR-001. The monitoring notification is already permanent, but a promoted chip
-is more prominent, and permanence may read as clutter.
+Two consequences to carry into planning:
 
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A | Permanent while monitoring runs | Simplest, matches today, always answerable at a glance |
-| B | Promoted only on events — low battery, charging, sensing — quiet otherwise | Less clutter; the answer is not always there, which undercuts SC-001 |
-| C | User's choice, defaulting to permanent | More settings surface to build and explain |
+- The value is shown **only while a session is active**. This grants no new visibility to
+  anything else, and FR-017 still forbids mentioning heart rate at all otherwise.
+- Hiding the value must not hide the disclosure (FR-018a). The sensor running is a fact the
+  user is owed; the number is a convenience they may decline.
 
-### Q3: What do phones below the supporting platform version get?
+### D2: The surface is permanent — FR-001
 
-**Context**: FR-014. The project's floor is Android 8.0 and a promoted live-update surface
-is a recent capability, so most installs will not have it.
+**Decided: permanent.** It is present for as long as monitoring runs, not promoted only on
+low battery, charging or an active session.
 
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A | Richer surface where available, today's notification everywhere else | Honest and cheap; the gap between phones is large and visible |
-| B | Also improve the ordinary notification for older phones | Most users benefit; more work, and two layouts to keep true to one another |
-| C | Gate the whole feature on the new capability and say so | Least work; leaves the majority of installs with nothing new |
+This is what makes SC-001 mean anything: an answer that is only sometimes there is not a
+glanceable answer. It also matches what the monitoring notification already does, so it
+adds no new persistent thing to the user's phone — it improves one that is already there.
+
+### D3: Older phones get nothing new — FR-014
+
+**Decided: nothing.** Phones whose platform has no promoted live surface keep exactly the
+ongoing notification they have today. No fallback layout is designed, and no existing
+behaviour changes.
+
+That is a deliberate scope cut and it lands on most installs, given the project's Android
+8.0 floor. It buys a single surface to build and keep true, rather than two that drift
+apart.
+
+It does **not** extend to silence. Those phones are still told why, in settings, in the
+same shape as a locked transport (FR-014a) — the constitution's "locked, not hidden" is
+about the user being able to tell "my phone can't" from "the app is broken", and a scope
+decision does not change what they are owed. User Story 4 survives this decision intact and
+is the only part of the feature those phones receive.

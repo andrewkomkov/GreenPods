@@ -35,6 +35,14 @@
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+        Lets the monitoring notification be promoted to a Live Update on Android 16+.
+        Non-runtime: it asks the user for nothing and adds no prompt, which is why it sits
+        inside the permissionless-by-default baseline. Without it the notification is
+        posted exactly as it is today.
+    -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.INTERNET" />

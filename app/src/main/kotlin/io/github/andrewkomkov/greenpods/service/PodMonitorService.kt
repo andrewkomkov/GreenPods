@@ -8,6 +8,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import io.github.andrewkomkov.greenpods.GreenPodsApplication
@@ -15,6 +16,11 @@ import io.github.andrewkomkov.greenpods.MainActivity
 import io.github.andrewkomkov.greenpods.R
 import io.github.andrewkomkov.greenpods.core.data.battery.LowBatteryNotifier
 import io.github.andrewkomkov.greenpods.core.data.battery.LowBatteryWarning
+import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityDecision
+import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityGate
+import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityPolicy
+import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
+import io.github.andrewkomkov.greenpods.core.model.PodState
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -34,6 +40,12 @@ import kotlinx.coroutines.launch
 class PodMonitorService : LifecycleService() {
     private val app get() = GreenPodsApplication.instance
     private val lowBattery = LowBatteryNotifier()
+
+    /** Decides what the live surface says. Pure, and tested without a device. */
+    private val livePolicy = LiveActivityPolicy()
+
+    /** What the surface last said, so an unchanged summary does not repost it. */
+    private var lastPosted: String? = null
 
     /**
      * Held here rather than in the container because it owns a registered receiver, and
@@ -73,28 +85,7 @@ class PodMonitorService : LifecycleService() {
                 pods to settings
             }.collect { (pods, settings) ->
                 val nearest = pods.firstOrNull()
-                updateOngoingNotification(
-                    when {
-                        nearest == null -> {
-                            "No AirPods nearby"
-                        }
-
-                        // FR-013: active sensing is discoverable without opening the app.
-                        // It comes first because it is the thing the user most needs to
-                        // know is running — it draws the accessory's battery.
-                        nearest.heartRateSensing.enabled && nearest.heartRate.isSensing -> {
-                            getString(R.string.monitor_notification_heart_rate, nearest.name)
-                        }
-
-                        nearest.battery.lowestBudPercent == null -> {
-                            nearest.name
-                        }
-
-                        else -> {
-                            "${nearest.name} · ${nearest.battery.lowestBudPercent}%"
-                        }
-                    },
-                )
+                publishSurface(nearest, settings)
                 pods.forEach { pod ->
                     lowBattery.evaluate(pod, settings).forEach(::warn)
                 }
@@ -145,15 +136,123 @@ class PodMonitorService : LifecycleService() {
             PendingIntent.FLAG_IMMUTABLE,
         )
 
+    /**
+     * The plain notification this service has always posted.
+     *
+     * Unchanged, and deliberately so: phones below the Live Update API get exactly what
+     * they had before, and the fallback path must not drift away from what it replaced.
+     */
     private fun buildOngoingNotification(text: String): Notification =
-        Notification
-            .Builder(this, ONGOING_CHANNEL_ID)
+        baseBuilder()
             .setContentTitle(getString(R.string.monitor_notification_title))
             .setContentText(text)
+            .build()
+
+    /**
+     * Everything both forms share. `NotificationCompat`, not the platform builder, so
+     * `setRequestPromotedOngoing` is a no-op below API 36 rather than a version branch at
+     * every call site.
+     */
+    private fun baseBuilder(): NotificationCompat.Builder =
+        NotificationCompat
+            .Builder(this, ONGOING_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_headset)
             .setContentIntent(contentIntent())
             .setOngoing(true)
-            .build()
+
+    /**
+     * Posts the live surface, or falls back to the plain notification.
+     *
+     * The decision of *what* to show is not made here — `LiveActivityPolicy` made it, and
+     * this only asks which of the two forms to render. Keeping the branch this small is
+     * what stops the fallback path from quietly diverging from the promoted one.
+     */
+    private fun publishSurface(
+        nearest: PodState?,
+        settings: GreenPodsSettings,
+    ) {
+        if (!canPostNotifications()) return
+
+        val decision =
+            livePolicy.decide(
+                availability = app.liveActivityGate.availability(),
+                settings = settings,
+                pod = nearest,
+                monitoring = true,
+                nowEpochMillis = System.currentTimeMillis(),
+            )
+
+        when (decision) {
+            is LiveActivityDecision.Post -> {
+                val body = LiveActivityNotification.text(this, decision.summary)
+                val rendered = "${decision.summary.accessoryName}|$body"
+
+                // The pods flow ticks far faster than this surface should move. Reposting
+                // identical content is what a rapid in-and-out of one bud would otherwise
+                // turn into: a flickering notification.
+                if (rendered == lastPosted) return
+                lastPosted = rendered
+
+                val notification =
+                    LiveActivityNotification
+                        .apply(baseBuilder(), this, decision.summary, promote = true)
+                        .build()
+
+                // Ask the device whether this notification actually qualifies, rather than
+                // trusting that it does. The permitted set of styles is something two
+                // Android documentation pages disagree about, so the platform is the
+                // arbiter — and a refusal is surfaced as a gate reason rather than
+                // swallowed, which is the difference between a diagnosable feature and one
+                // that silently does nothing.
+                if (Build.VERSION.SDK_INT >= LiveActivityGate.MIN_SDK) {
+                    if (notification.hasPromotableCharacteristics()) {
+                        app.liveActivityGate.recordPromotable()
+                    } else {
+                        app.liveActivityGate.recordNotPromotable(
+                            "the notification does not have promotable characteristics",
+                        )
+                        // Post it anyway: it is still the foreground service's notification
+                        // and the service must have one. It simply will not be promoted.
+                        lastPosted = null
+                    }
+                }
+
+                getSystemService(NotificationManager::class.java)
+                    .notify(ONGOING_NOTIFICATION_ID, notification)
+            }
+
+            is LiveActivityDecision.Withhold -> {
+                // Still a foreground service, so a notification must exist. It falls back
+                // to exactly the text this service has always posted — phones that cannot
+                // show the richer surface lose nothing they had.
+                lastPosted = null
+                updateOngoingNotification(fallbackText(nearest))
+            }
+        }
+    }
+
+    /** The pre-existing summary line, unchanged. */
+    private fun fallbackText(nearest: PodState?): String =
+        when {
+            nearest == null -> {
+                "No AirPods nearby"
+            }
+
+            // Active sensing is discoverable without opening the app. It comes first
+            // because it is the thing the user most needs to know is running — it draws
+            // the accessory's battery.
+            nearest.heartRateSensing.enabled && nearest.heartRate.isSensing -> {
+                getString(R.string.monitor_notification_heart_rate, nearest.name)
+            }
+
+            nearest.battery.lowestBudPercent == null -> {
+                nearest.name
+            }
+
+            else -> {
+                "${nearest.name} · ${nearest.battery.lowestBudPercent}%"
+            }
+        }
 
     private fun updateOngoingNotification(text: String) {
         if (!canPostNotifications()) return
