@@ -283,8 +283,9 @@ class HeartRateControllerTest {
 
             harness.report(150, 10)
 
-            harness.state.shouldBeInstanceOf<HeartRateState.Uncertain>()
+            val collapsed = harness.state.shouldBeInstanceOf<HeartRateState.Uncertain>()
             harness.state.trustedReading shouldBe null
+            collapsed.cause shouldBe HeartRateState.Uncertain.Cause.LOW_CONFIDENCE
             // Still measuring — the reading was withdrawn, not the session.
             harness.commands.stopped.shouldBeEmpty()
         }
@@ -312,8 +313,12 @@ class HeartRateControllerTest {
             harness.nowMillis += 3_000
             harness.tick()
 
-            harness.state.shouldBeInstanceOf<HeartRateState.Uncertain>()
+            val uncertain = harness.state.shouldBeInstanceOf<HeartRateState.Uncertain>()
             harness.state.trustedReading shouldBe null
+            // The cause is carried, because the screen says a different sentence for each
+            // and "the earbuds report low confidence" would be a claim about something
+            // that did not happen — nothing arrived to have any confidence.
+            uncertain.cause shouldBe HeartRateState.Uncertain.Cause.NO_REPORTS
         }
 
     @Test

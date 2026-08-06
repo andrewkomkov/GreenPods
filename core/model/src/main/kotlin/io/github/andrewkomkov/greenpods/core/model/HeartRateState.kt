@@ -86,13 +86,28 @@ sealed interface HeartRateState {
     }
 
     /**
-     * Confidence fell below the gate mid-session. The number is withdrawn and sensing
-     * continues — the user is told the reading is uncertain rather than shown a stale
-     * one as though it were current (FR-006).
+     * The number has been withdrawn mid-session and sensing continues — the user is told
+     * the reading is uncertain rather than shown a stale one as though it were current
+     * (FR-006).
+     *
+     * [cause] exists because the two ways to get here are different facts and the screen
+     * must not state the wrong one. Saying "the earbuds report low confidence" when the
+     * earbuds have said nothing at all is a plausible sentence about something that did
+     * not happen, which is exactly what Principle V forbids.
      */
     data class Uncertain(
         val lastTrustedAtEpochMillis: Long?,
+        val cause: Cause = Cause.LOW_CONFIDENCE,
     ) : HeartRateState {
+        /** Why the number was withdrawn. */
+        enum class Cause {
+            /** Reports are still arriving; the accessory says it does not trust them. */
+            LOW_CONFIDENCE,
+
+            /** Reports stopped arriving. The accessory has said nothing, which is the point. */
+            NO_REPORTS,
+        }
+
         override val stateName: String get() = "UNCERTAIN"
     }
 
@@ -125,6 +140,17 @@ data class HeartRateSensing(
     /** Readings outside the plausible range, counted rather than recorded (FR-009). */
     val discardedImplausible: Int = 0,
     val lastStopReason: String? = null,
+    /**
+     * How many times the controller's clock has ticked since the app started.
+     *
+     * A diagnostic, and a pointed one: two timeouts hang off that tick — the
+     * no-convergence give-up and the withdrawal of a reading that has stopped arriving —
+     * and both are collected on the same coroutine as pods, AAP events and GATT readings.
+     * If anything on that collector blocks, the ticks queue behind it and both timeouts
+     * silently stop existing. A number that is not climbing says so in one glance; without
+     * it the only symptom is a timeout that "does not work".
+     */
+    val ticksSeen: Int = 0,
 ) {
     companion object {
         val Idle = HeartRateSensing()

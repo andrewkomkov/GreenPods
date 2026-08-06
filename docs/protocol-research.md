@@ -571,46 +571,60 @@ join, and are explicitly out of scope:
 
 Things learned by running GreenPods on real hardware, as opposed to from captures.
 
-### The heart-rate controller's clock stops, and takes two timeouts with it — 2026-08-06
+### The clock was never stopped — the diagnosis above was wrong — 2026-08-06
 
-**Open. Not diagnosed, and it disables a fix that was shipped the same day.**
+**Corrected the same day, by measuring instead of reasoning.**
 
-Observed on a fresh Bluetooth link, Pixel 8 / AirPods Pro 3, with the accessory's services
-freshly announced and visible to `gp --es cmd hid` — four services including heart rate:
+The note that stood here concluded that `HeartRateController`'s ticks were starved,
+because a thirty-second timeout had not fired in two minutes. It reasoned from a comment
+already in the file describing exactly that failure, and it was wrong.
+
+A counter on the tick branch — `ticks=` in `hr status` — settled it in one run:
 
 ```
-[15s]  state=STARTING service=none reports=308
-[120s] state=STARTING service=none reports=308
+[23s] ticks=19  state=MEASURING service=0x13 reports=17
+[46s] ticks=42  state=MEASURING service=0x13 reports=40
+[92s] ticks=90  state=MEASURING service=0x13 reports=88
 ```
 
-Two things are wrong and they are probably the same thing.
+Ticks arrive at one a second and the session converges. The clock runs.
 
-**The controller never learns a service the decoder already has.** `hid` lists the
-heart-rate service from the same channel, at the same moment, while `hr status` reports
-`service=none`. This is the shape of the bug fixed the day before — remembered services not
-being announced — but that fix does not cover this case, and the cause here is not yet
-known.
+What actually differed between the two observations was the **service announcement**. In
+the failing run the app had just been reinstalled, which cleared `HidServiceMemory`, and
+the Bluetooth link predated the install — so the announcement had already happened and
+could not be asked for again. `service=none` was the accessory never having described
+itself to *this install*, not a stalled collector. Re-seating the earbuds gave a fresh
+link, the announcement arrived, and everything worked.
 
-**The 30-second no-convergence timeout never fires.** Two minutes in `STARTING` with a
-30-second timeout is not a slow timeout, it is a timeout that is not running. It is driven
-by `ticks`, collected on the same single collector as pods, AAP events and GATT readings.
+The thirty-second no-convergence timeout not firing in that state remains **unexplained**
+and is worth returning to. It is now a narrow question — a session with no service id —
+rather than a claim about the controller's clock.
 
-`HeartRateController` already carries a comment describing exactly this failure — "doing
-that on the single collector that owns the state machine stops the clock: ticks queue
-behind it, the no-convergence timeout never fires, and the user watches a spinner that
-cannot resolve. Measured on hardware" — and the *ask* path was moved onto a channel because
-of it. `startAap` still awaits `commands.startHeartRate`, which opens a channel, waits for
-it to be writable, and writes to a `BluetoothSocket` that has no write timeout. That is a
-candidate, not a conclusion: in the captured case the service id was null, so the start
-path was never reached.
+**Why this is recorded rather than quietly deleted.** The previous note asserted a
+mechanism from a plausible chain of reasoning and one negative observation, and stated
+that a shipped fix was inert in production. That claim reached a merged PR. The tick
+counter cost one build. Principle V's harder direction is exactly this: an absence — a
+timeout that did not fire — is not evidence of the mechanism you happen to have a comment
+about.
 
-**Why this matters beyond the spinner.** The stale-reading withdrawal added in v0.5.0 runs
-on the same tick. If ticks are starved, a frozen heart rate is *not* withdrawn on this
-device, whatever the unit tests say — the fix is correct in the state machine and inert in
-production until the clock runs. That is the honest status of it.
+### The withdrawal of a stale reading, verified — 2026-08-06
 
-Next step is to establish whether ticks arrive at all — a counter on the tick branch would
-settle it in one run — before changing anything.
+The v0.5.0 fix, confirmed on hardware once a session could reach `MEASURING`:
+
+```
+before          ticks=131 state=MEASURING  reports=129
+stop frame sent to the accessory, controller not told
++11s            ticks=139 state=UNCERTAIN  reports=133
++33s            ticks=166 state=UNCERTAIN  reports=133
+```
+
+The number is withdrawn about four seconds after reports stop, the session stays up, and
+the count stays frozen — the sensor really had stopped. On screen the card reads "Reading
+uncertain" with no BPM.
+
+That last check also found a copy bug worth the trip: the uncertain state said "the earbuds
+report low confidence" on **both** paths, and on this one the earbuds had said nothing at
+all. `Uncertain` now carries its cause and the screen states the true one.
 
 ### A foreground-service notification does get promoted — 2026-08-06
 

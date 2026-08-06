@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Headphones
@@ -36,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -152,7 +154,15 @@ fun GreenPodsApp(
                     }
                 }
             }
-            val colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+            // Both, not just the container. `scrolledContainerColor` defaults to a tinted
+            // surface, so once the content scrolled the bar painted an opaque band with a
+            // hard edge across the screen — the opposite of edge-to-edge, and it appeared
+            // only after scrolling, which is why it survived the first look.
+            val colors =
+                TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
+                )
 
             // Large where the screen is a destination, small where it is pushed on top of
             // one. A pushed screen is somewhere you already are and came from; giving it
@@ -312,8 +322,16 @@ fun GreenPodsApp(
                     Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(bottom = 12.dp),
-                colors = FloatingToolbarDefaults.vibrantFloatingToolbarColors(),
+                        .padding(bottom = 12.dp)
+                        .shadow(FLOATING_BAR_ELEVATION, CircleShape, clip = false),
+                // Standard rather than vibrant, and lifted off the page.
+                //
+                // The vibrant container is a solid slab of colour the width of the bar; on
+                // a page this pale it reads as a background stuck behind the buttons rather
+                // than as something floating over them. A quieter container plus a shadow
+                // is what actually says "this is above the content" — the shadow is the
+                // part that does the work, and the vibrant fill was standing in for it.
+                colors = FloatingToolbarDefaults.standardFloatingToolbarColors(),
             ) {
                 GreenPodsDestination.entries.forEach { destination ->
                     val selected = current?.hierarchy?.any { it.route == destination.route } == true
@@ -346,6 +364,9 @@ private const val HEAD_GESTURES_ROUTE = "head-gestures"
 
 /** A fade through starts slightly small, so peers cross-dissolve with a little life. */
 private const val FADE_THROUGH_SCALE = 0.92f
+
+/** Enough to read as lifted off the page without casting a slab of shadow. */
+private val FLOATING_BAR_ELEVATION = 6.dp
 
 /** A shared axis travels a fraction of the width, not all of it — this is a push, not a page turn. */
 private const val SHARED_AXIS_FRACTION = 5

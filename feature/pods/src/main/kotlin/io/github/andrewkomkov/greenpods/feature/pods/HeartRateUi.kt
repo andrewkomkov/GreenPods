@@ -166,8 +166,19 @@ object HeartRateCopy {
             }
 
             is HeartRateState.Uncertain -> {
-                "The earbuds report low confidence, so the last number has been withdrawn. " +
-                    "Still measuring."
+                when (state.cause) {
+                    HeartRateState.Uncertain.Cause.LOW_CONFIDENCE -> {
+                        "The earbuds report low confidence, so the last number has been withdrawn. " +
+                            "Still measuring."
+                    }
+
+                    // Deliberately says nothing about confidence: nothing has arrived to
+                    // have any. What is known is that readings stopped, and that is all
+                    // this is allowed to claim.
+                    HeartRateState.Uncertain.Cause.NO_REPORTS -> {
+                        "Readings have stopped arriving, so the last number has been withdrawn."
+                    }
+                }
             }
 
             is HeartRateState.Off -> {
