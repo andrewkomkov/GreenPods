@@ -59,6 +59,8 @@ class SettingsRepository(
             preferences[Keys.HEART_RATE_HEALTH_CONNECT] = updated.heartRateHealthConnectEnabled
             preferences[Keys.HEART_RATE_INTERVAL_MILLIS] = updated.heartRateIntervalMillis
             preferences[Keys.HEART_RATE_CONFIDENCE] = updated.heartRateConfidenceThreshold
+            preferences[Keys.LIVE_ACTIVITY] = updated.liveActivityEnabled
+            preferences[Keys.LIVE_ACTIVITY_SHOW_HEART_RATE] = updated.liveActivityShowHeartRate
         }
     }
 
@@ -100,6 +102,10 @@ class SettingsRepository(
             heartRateConfidenceThreshold =
                 preferences[Keys.HEART_RATE_CONFIDENCE]
                     ?: defaults.heartRateConfidenceThreshold,
+            liveActivityEnabled = preferences[Keys.LIVE_ACTIVITY] ?: defaults.liveActivityEnabled,
+            liveActivityShowHeartRate =
+                preferences[Keys.LIVE_ACTIVITY_SHOW_HEART_RATE]
+                    ?: defaults.liveActivityShowHeartRate,
         ).sanitised()
     }
 
@@ -124,6 +130,15 @@ class SettingsRepository(
          * provisional (R-4), and re-deriving it must not mean rebuilding the app.
          */
         val HEART_RATE_CONFIDENCE = intPreferencesKey("heart_rate_confidence")
+
+        val LIVE_ACTIVITY = booleanPreferencesKey("live_activity")
+
+        /**
+         * Hides the heart-rate **value** on the live surface, never the disclosure that
+         * sensing is running. Persisted separately from [HEART_RATE] because declining to
+         * display a reading is not declining to measure one.
+         */
+        val LIVE_ACTIVITY_SHOW_HEART_RATE = booleanPreferencesKey("live_activity_show_heart_rate")
     }
 
     companion object {

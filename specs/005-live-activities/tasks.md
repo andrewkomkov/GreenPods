@@ -31,8 +31,8 @@ Existing module layout, unchanged. Package root is
 
 **Purpose**: The two things that must exist before any of it compiles or runs.
 
-- [ ] T001 Add `LIVE_ACTIVITY_MIN_SDK = 36` beside `L2CAP_MIN_SDK` in `build-logic/src/main/kotlin/GreenPodsConfig.kt`, with a comment saying which API introduced promoted ongoing notifications
-- [ ] T002 Add `<uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />` to `app/src/main/AndroidManifest.xml`, with a comment noting it is non-runtime and adds no prompt
+- [x] T001 Add `LIVE_ACTIVITY_MIN_SDK = 36` beside `L2CAP_MIN_SDK` in `build-logic/src/main/kotlin/GreenPodsConfig.kt`, with a comment saying which API introduced promoted ongoing notifications
+- [x] T002 Add `<uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />` to `app/src/main/AndroidManifest.xml`, with a comment noting it is non-runtime and adds no prompt
 
 ---
 
@@ -41,10 +41,10 @@ Existing module layout, unchanged. Package root is
 **Purpose**: The gate type and the settings every user story branches on. Nothing below can
 be built without these.
 
-- [ ] T003 [P] Create `LiveActivityAvailability` sealed interface in `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/LiveActivityAvailability.kt` with states `Available`, `PlatformTooOld(apiLevel)`, `PromotionRefused`, `NotificationsDenied`, `NotPromotable(reason)` and an `isAvailable` property — no Android imports, mirroring `AapAvailability`
-- [ ] T004 [P] Add `liveActivityEnabled` (default true) and `liveActivityShowHeartRate` (default true) to `GreenPodsSettings` and to `SettingsRepository` preference keys in `core/data/src/main/kotlin/io/github/andrewkomkov/greenpods/core/data/settings/SettingsRepository.kt`
-- [ ] T005 Extend the `set` command key list in `app/src/debug/kotlin/io/github/andrewkomkov/greenpods/debug/GreenPodsDebugReceiver.kt` to accept `liveActivityEnabled` and `liveActivityShowHeartRate`
-- [ ] T006 [P] Unit-test `LiveActivityAvailability` in `core/model/src/test/kotlin/io/github/andrewkomkov/greenpods/core/model/LiveActivityAvailabilityTest.kt` — every non-`Available` state reports `isAvailable == false`, and the four unavailable states are distinguishable from one another rather than collapsing to one
+- [x] T003 [P] Create `LiveActivityAvailability` sealed interface in `core/model/src/main/kotlin/io/github/andrewkomkov/greenpods/core/model/LiveActivityAvailability.kt` with states `Available`, `PlatformTooOld(apiLevel)`, `PromotionRefused`, `NotificationsDenied`, `NotPromotable(reason)` and an `isAvailable` property — no Android imports, mirroring `AapAvailability`
+- [x] T004 [P] Add `liveActivityEnabled` (default true) and `liveActivityShowHeartRate` (default true) to `GreenPodsSettings` and to `SettingsRepository` preference keys in `core/data/src/main/kotlin/io/github/andrewkomkov/greenpods/core/data/settings/SettingsRepository.kt`
+- [x] T005 Extend the `set` command key list in `app/src/debug/kotlin/io/github/andrewkomkov/greenpods/debug/GreenPodsDebugReceiver.kt` to accept `liveActivityEnabled` and `liveActivityShowHeartRate`
+- [x] T006 [P] Unit-test `LiveActivityAvailability` — every non-`Available` state reports `isAvailable == false`, and the four unavailable states are distinguishable rather than collapsing to one. **Lives in `LiveActivityGateTest.kt`, not its own file**: the states are only meaningful as the gate's answers, and testing them apart from the ordering that produces them would check the enum rather than the behaviour
 
 **Checkpoint**: The gate type exists and settings are drivable from adb.
 
@@ -61,9 +61,9 @@ so shipping it alone still delivers something to most installs.
 **Independent test**: On a device below API 36, the settings entry is present, disabled and
 reasoned, and the existing ongoing notification is unchanged.
 
-- [ ] T007 [US4] Create `LiveActivityGate` in `core/data/src/main/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivityGate.kt` — resolves `LiveActivityAvailability` from the platform API level, `NotificationManager.canPostPromotedNotifications()`, and notification permission; keep the Android calls behind a small injectable interface so the resolution logic stays testable
-- [ ] T008 [P] [US4] Add user-facing reason strings for all four unavailable states to `app/src/main/res/values/strings.xml`, each naming what the user can do about it (or that there is nothing)
-- [ ] T009 [US4] Unit-test `LiveActivityGate` in `core/data/src/test/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivityGateTest.kt` — one case per state, including that an API-36 device with promotion refused yields `PromotionRefused` and **not** `PlatformTooOld`
+- [x] T007 [US4] Create `LiveActivityGate` in `core/data/src/main/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivityGate.kt` — resolves `LiveActivityAvailability` from the platform API level, `NotificationManager.canPostPromotedNotifications()`, and notification permission; keep the Android calls behind a small injectable interface so the resolution logic stays testable
+- [x] T008 [P] [US4] Add user-facing reason strings for all four unavailable states to `app/src/main/res/values/strings.xml`, each naming what the user can do about it (or that there is nothing)
+- [x] T009 [US4] Unit-test `LiveActivityGate` in `core/data/src/test/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivityGateTest.kt` — one case per state, including that an API-36 device with promotion refused yields `PromotionRefused` and **not** `PlatformTooOld`
 - [ ] T010 [US4] Add the live-activity entry to `feature/settings`, shown **locked with its reason** when unavailable rather than hidden (FR-014a, Principle II), reusing the existing locked-affordance component
 - [ ] T011 [US4] Add `Settings.ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS` as the action on the `PromotionRefused` reason so the user has a route back
 
@@ -83,15 +83,15 @@ AAP channel never opens.
 and the case level without unlocking; stop injecting and watch the surface say out-of-range
 rather than showing stale levels.
 
-- [ ] T012 [P] [US1] Create `LiveActivitySummary` data class in `core/data/src/main/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivitySummary.kt` with `accessoryName`, `presence`, `leftPercent`/`rightPercent`/`casePercent` as nullable, `charging`, `wear`, `noiseControl`, `sensing` — per [data-model.md](./data-model.md)
-- [ ] T013 [US1] Create `LiveActivityPolicy` in `core/data/src/main/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivityPolicy.kt` — pure; given availability, settings and pod state, returns a summary or a reason not to post. Encodes: monitoring off ⇒ no surface; a dismissed surface stays down; availability checked before content is built; re-post only when rendered content changes
-- [ ] T014 [US1] Unit-test the summary in `core/data/src/test/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivitySummaryTest.kt` — **null battery is not 0%**, out-of-range suppresses levels rather than carrying them forward, charging is represented distinctly, and the accessory is always named
-- [ ] T015 [US1] Unit-test the policy in `core/data/src/test/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivityPolicyTest.kt` — including that a dismissed surface is not reposted on the next state tick, and that identical rendered content produces no re-post
-- [ ] T016 [US1] Create `LiveActivityNotification` in `app/src/main/kotlin/io/github/andrewkomkov/greenpods/service/LiveActivityNotification.kt` — renders a `LiveActivitySummary` with `NotificationCompat`, sets `setRequestPromotedOngoing(true)`, `BigTextStyle`, `deleteIntent`; **never** sets a custom `RemoteViews`, `setColorized(true)` or `setGroupSummary(true)`, each of which disqualifies promotion (R-1)
-- [ ] T017 [US1] Rewrite `buildOngoingNotification`/`updateOngoingNotification` in `app/src/main/kotlin/io/github/andrewkomkov/greenpods/service/PodMonitorService.kt` to use `NotificationCompat` and render through `LiveActivityNotification`, keeping the existing text exactly when the gate is unavailable (FR-014 — those phones get nothing new)
+- [x] T012 [P] [US1] Create `LiveActivitySummary` data class in `core/data/src/main/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivitySummary.kt` with `accessoryName`, `presence`, `leftPercent`/`rightPercent`/`casePercent` as nullable, `charging`, `wear`, `noiseControl`, `sensing` — per [data-model.md](./data-model.md)
+- [x] T013 [US1] Create `LiveActivityPolicy` in `core/data/src/main/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivityPolicy.kt` — pure; given availability, settings and pod state, returns a summary or a reason not to post. Encodes: monitoring off ⇒ no surface; a dismissed surface stays down; availability checked before content is built; re-post only when rendered content changes
+- [x] T014 [US1] Unit-test the summary — **null battery is not 0%**, out-of-range suppresses levels rather than carrying them forward, charging is represented distinctly, and the accessory is always named. **Lives in `LiveActivityPolicyTest.kt`**: the summary is produced by the policy and has no constructor worth testing on its own
+- [x] T015 [US1] Unit-test the policy in `core/data/src/test/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivityPolicyTest.kt` — including that a dismissed surface is not reposted on the next state tick, and that identical rendered content produces no re-post
+- [x] T016 [US1] Create `LiveActivityNotification` in `app/src/main/kotlin/io/github/andrewkomkov/greenpods/service/LiveActivityNotification.kt` — renders a `LiveActivitySummary` with `NotificationCompat`, sets `setRequestPromotedOngoing(true)`, `BigTextStyle`, `deleteIntent`; **never** sets a custom `RemoteViews`, `setColorized(true)` or `setGroupSummary(true)`, each of which disqualifies promotion (R-1)
+- [x] T017 [US1] Rewrite `buildOngoingNotification`/`updateOngoingNotification` in `app/src/main/kotlin/io/github/andrewkomkov/greenpods/service/PodMonitorService.kt` to use `NotificationCompat` and render through `LiveActivityNotification`, keeping the existing text exactly when the gate is unavailable (FR-014 — those phones get nothing new)
 - [ ] T018 [US1] Call `Notification.hasPromotableCharacteristics()` after building and map a `false` to `LiveActivityAvailability.NotPromotable(reason)` — R-4 leaves the permitted style genuinely unsettled between two Android docs, so the device is the arbiter and its answer is surfaced, not swallowed
-- [ ] T019 [US1] Add the `live` command to `app/src/debug/kotlin/io/github/andrewkomkov/greenpods/debug/GreenPodsDebugReceiver.kt` per [contracts/live-surface.md](./contracts/live-surface.md) — availability, reason, posted, dismissed, accessory, presence, battery, charging, wear
-- [ ] T020 [P] [US1] Document `gp --es cmd live` in `docs/adb.md` with runnable examples, in the same change as T019 (FR-021, Principle VI)
+- [x] T019 [US1] Add the `live` command to `app/src/debug/kotlin/io/github/andrewkomkov/greenpods/debug/GreenPodsDebugReceiver.kt` per [contracts/live-surface.md](./contracts/live-surface.md) — availability, reason, posted, dismissed, accessory, presence, battery, charging, wear
+- [x] T020 [P] [US1] Document `gp --es cmd live` in `docs/adb.md` with runnable examples, in the same change as T019 (FR-021, Principle VI)
 
 **Checkpoint**: MVP complete. Verify against [quickstart.md](./quickstart.md) sections 1, 2 and 5.
 
@@ -142,7 +142,7 @@ cease in the earbuds.
 - [ ] T034 Verify on hardware that a foreground-service notification is actually promoted — the single assumption the whole feature rests on (research.md open items). Record the result in `docs/protocol-research.md` as a field note either way
 - [ ] T035 [P] Confirm the rapid-wear-change edge case produces no flicker, driven by repeated `inject` calls
 - [ ] T036 [P] Confirm notifications-denied behaviour: service still runs, surface absent, nothing senses silently (quickstart section 6)
-- [ ] T037 Run `./gradlew spotlessCheck lintDebug testDebugUnitTest` and fix anything it finds
+- [x] T037 Run `./gradlew spotlessCheck lintDebug testDebugUnitTest` and fix anything it finds
 - [ ] T038 Walk the whole of [quickstart.md](./quickstart.md) on a device and record which steps were actually executed — a green suite is not a substitute, and two instrumented tests in this project already pass only when no AirPods are nearby
 
 ---

@@ -66,6 +66,22 @@ data class GreenPodsSettings(
      * hrConfidenceThreshold` (R-4).
      */
     val heartRateConfidenceThreshold: Int = DEFAULT_HR_CONFIDENCE_THRESHOLD,
+    /**
+     * Whether the monitoring notification may be promoted to a live status surface.
+     *
+     * On by default, and that is not the usual "off until asked". It replaces a
+     * notification the user already sees rather than adding one, so switching it on
+     * interrupts nobody — the argument that keeps [heartRateEnabled] off does not apply.
+     */
+    val liveActivityEnabled: Boolean = true,
+    /**
+     * Whether the live surface may show the heart rate itself while a session is running.
+     *
+     * Turning this off hides the **value** and never the disclosure. A user may decline to
+     * display their heart rate on a screen anyone could read; they may not have the
+     * accessory's optical sensor run without being told it is running.
+     */
+    val liveActivityShowHeartRate: Boolean = true,
 ) {
     /** Clamps anything a corrupted preference file could contain into a usable range. */
     fun sanitised(): GreenPodsSettings =

@@ -106,6 +106,58 @@ interval set to zero stops it. This is how undecoded protocol behaviour gets
 characterised, and it goes over the ordinary session on purpose — an experiment on a
 private channel would prove nothing about the real one.
 
+## The live status surface
+
+```bash
+gp --es cmd live
+```
+
+Prints what the lock-screen surface would show, and why it would show nothing:
+
+```
+live: availability=AVAILABLE reason="none" posted=true
+live: accessory="AirPods Pro" presence=IN_RANGE
+live: battery left=72% right=68% case=unknown charging=[CASE]
+live: wear left=IN_EAR right=IN_EAR
+live: noiseControl=OFFERED mode=TRANSPARENCY
+live: sensing=DISCLOSED valueShown=true
+```
+
+Unavailable, with the reason the settings screen shows:
+
+```
+live: availability=PLATFORM_TOO_OLD reason="API 34, needs 36" posted=false withheld=…
+```
+
+`availability` separates four situations that all look like a missing feature from the
+outside: `PLATFORM_TOO_OLD` (nothing can be done), `PROMOTION_REFUSED` (the user turned it
+off, and there is a settings screen to go to), `NOTIFICATIONS_DENIED`, and `NOT_PROMOTABLE`
+(the device examined the notification and declined). `withheld` says why a surface was not
+posted on a phone that could have shown one — monitoring off, switched off, no accessory,
+or dismissed.
+
+**It prints no heart rate.** `valueShown=true` says the surface would carry a number; it
+never says which. That looks inconsistent with allowing the value on a lock screen, and is
+not: no reading may appear in any diagnostic path, and this output is the most diagnostic
+thing in the app — it gets pasted into bug reports. A lock screen shows a user their own
+body's data; this does not.
+
+Drive it without any hardware, which is the point:
+
+```bash
+gp --es cmd monitor --es value on
+gp --es cmd inject --es model 0x1420 --ei left 72 --ei right 68 --ei case 90 \
+   --es wear in_ear --es address DE:B0:60:00:00:01
+gp --es cmd live
+
+gp --es cmd set --es key liveActivityEnabled --es value off        # posted=false
+gp --es cmd set --es key liveActivityShowHeartRate --es value off  # valueShown=false
+```
+
+Stop injecting and wait 30 s: `presence` becomes `OUT_OF_RANGE` and the levels are
+**dropped** rather than carried forward. A stale percentage shown as current is the failure
+that check exists to catch.
+
 ### Reading what the accessory says about its own sensors
 
 ```bash
@@ -206,7 +258,8 @@ gp --es cmd set --es key lowBatteryThreshold --es value 30
 
 Keys: `autoPause`, `autoResume`, `pauseOnlyWhenBothOut`, `backgroundMonitoring`,
 `lowBatteryWarning`, `lowBatteryThreshold`, `headGestures`, `scanMode`,
-`hrIntervalMs`, `hrConfidenceThreshold`, `hrHealthConnect`.
+`hrIntervalMs`, `hrConfidenceThreshold`, `hrHealthConnect`, `liveActivityEnabled`,
+`liveActivityShowHeartRate`.
 
 ## Heart rate
 

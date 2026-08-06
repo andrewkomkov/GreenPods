@@ -8,4 +8,20 @@
     <string name="low_battery_text">%1$d%% remaining</string>
     <string name="monitor_notification_heart_rate">%1$s · measuring heart rate</string>
     <string name="health_rationale_title">Heart rate and Health Connect</string>
+
+    <!-- Live status surface -->
+    <string name="live_sensing">measuring heart rate</string>
+    <string name="live_sensing_with_rate">%1$d bpm</string>
+    <string name="live_out_of_range">not in range</string>
+    <string name="live_no_reading">no battery reading yet</string>
+
+    <!-- Why the live surface is unavailable. Each says what, if anything, can be done. -->
+    <string name="live_unavailable_platform">This phone runs Android API %1$d. A live status surface needs API 36 or newer, so it cannot be shown here. Monitoring works exactly as before.</string>
+    <string name="live_unavailable_promotion_refused">You have turned off promoted notifications for GreenPods. Turn them back on to see the live status surface.</string>
+    <string name="live_unavailable_notifications_denied">Notification permission is not granted, so nothing can be shown. Monitoring still runs.</string>
+    <string name="live_unavailable_not_promotable">This device declined to promote the notification: %1$s</string>
+    <string name="live_settings_title">Live status surface</string>
+    <string name="live_settings_summary">Show battery, wear and listening mode on the lock screen.</string>
+    <string name="live_settings_heart_rate_title">Show heart rate on the live surface</string>
+    <string name="live_settings_heart_rate_summary">Turning this off hides the number. It never hides the fact that the sensor is running.</string>
 </resources>
