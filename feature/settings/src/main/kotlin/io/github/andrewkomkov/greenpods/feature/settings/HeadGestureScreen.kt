@@ -51,6 +51,7 @@ import io.github.andrewkomkov.greenpods.core.data.head.HeadTrackingController
 import io.github.andrewkomkov.greenpods.core.designsystem.component.HeadMotionToy
 import io.github.andrewkomkov.greenpods.core.designsystem.component.LockedCard
 import io.github.andrewkomkov.greenpods.core.designsystem.theme.GreenPodsMotion
+import io.github.andrewkomkov.greenpods.core.designsystem.theme.GreenPodsSpacing
 import io.github.andrewkomkov.greenpods.core.model.HeadGesture
 import kotlinx.coroutines.delay
 
@@ -79,7 +80,14 @@ fun HeadGestureScreen(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier =
+            modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+                // Content runs under the floating bar; this is what keeps the
+                // last control reachable above it.
+                .padding(bottom = GreenPodsSpacing.FloatingBarSpace),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

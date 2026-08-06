@@ -38,6 +38,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.andrewkomkov.greenpods.core.designsystem.component.HeartBeatIcon
+import io.github.andrewkomkov.greenpods.core.designsystem.theme.GreenPodsSpacing
 
 /**
  * The measurement, given the whole display.
@@ -63,7 +64,14 @@ fun HeartRateScreen(
     val measuring = ui.kind != HeartRateUi.Kind.OFF
 
     Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier =
+            modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+                // Content runs under the floating bar; this is what keeps the
+                // last control reachable above it.
+                .padding(bottom = GreenPodsSpacing.FloatingBarSpace),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Hero(ui = ui, intervalMillis = intervalMillis)
