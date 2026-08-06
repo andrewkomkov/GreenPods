@@ -18,6 +18,8 @@ import io.github.andrewkomkov.greenpods.core.model.LiveActivityAvailability
 import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.ScanMode
+import io.github.andrewkomkov.greenpods.service.LiveActivityActionReceiver
+import io.github.andrewkomkov.greenpods.service.LiveActivityActions
 import io.github.andrewkomkov.greenpods.service.PodMonitorService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -96,7 +98,8 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
             }
 
             "live" -> {
-                live(app)
+                val action = intent.getStringExtra("action").orEmpty()
+                if (action.isEmpty()) live(app) else liveAction(context, action)
             }
 
             "hr" -> {
@@ -335,14 +338,30 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
             val settings = app.settingsRepository.settings.first()
             val availability = app.liveActivityGate.availability()
 
+            // The service's own decision, when it has made one.
+            //
+            // Re-deriving it here would not be reporting the feature; it would be reporting
+            // a second implementation that happens to share a class. Most of the time the
+            // two agree, and the one place they cannot is the one worth checking: the
+            // dismissal lives in the policy's instance state, so a policy constructed here
+            // can never say `Dismissed` — this command used to report a surface as posted
+            // seconds after it had been swiped away.
+            //
+            // The fallback is labelled rather than silent. `monitoring=true` in it is an
+            // assumption, not an observation, and a reader has to be able to tell the two
+            // apart.
+            val live = PodMonitorService.lastDecision
             val decision =
-                LiveActivityPolicy().decide(
+                live ?: LiveActivityPolicy().decide(
                     availability = availability,
                     settings = settings,
                     pod = pod,
                     monitoring = true,
                     nowEpochMillis = System.currentTimeMillis(),
                 )
+            if (live == null) {
+                reply("live: the monitoring service has published nothing — this is a prediction, not its state")
+            }
 
             val name =
                 when (availability) {
@@ -410,6 +429,77 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
             }
         }
     }
+
+    /**
+     * Presses a button on the live surface, without a finger.
+     *
+     * The surface's controls are user-visible behaviour, and Principle VI does not exempt
+     * behaviour for being behind a notification: a control that can only be exercised by
+     * tapping the lock screen cannot be verified, only photographed. Before this existed,
+     * `quickstart.md` sections 3 and 4 both read `# tap the action on the device`, which is
+     * the admission that the check was manual.
+     *
+     * These send the **same intents the buttons send**, to the same receiver and the same
+     * service. Not a shortcut past them into the gateway: a second route would prove the
+     * gateway works and say nothing about whether the button reaches it, which is the half
+     * that is actually new.
+     *
+     * `dismiss` is worth having for a reason the other two are not — it is the only way to
+     * reach the dismissal rule at all, since the alternative is swiping a notification that
+     * a script cannot swipe.
+     */
+    private fun liveAction(
+        context: Context,
+        action: String,
+    ) {
+        when (action.lowercase()) {
+            "cycle" -> {
+                context.sendBroadcast(surfaceIntent(context, LiveActivityActions.ACTION_CYCLE_NOISE_CONTROL))
+                reply("live: pressed cycle — the mode moves only when the accessory echoes it")
+            }
+
+            "stop" -> {
+                context.sendBroadcast(surfaceIntent(context, LiveActivityActions.ACTION_STOP_SENSING))
+                reply("live: pressed stop — check `hr status` for reports ceasing in the accessory")
+            }
+
+            // Delivered to the service rather than the receiver, because that is where the
+            // policy instance that owns the dismissal actually lives.
+            "dismiss" -> {
+                context.startService(
+                    Intent(context, PodMonitorService::class.java)
+                        .setAction(LiveActivityActions.ACTION_SURFACE_DISMISSED),
+                )
+                reply("live: dismissed — the surface must stay gone until a reason to repost")
+            }
+
+            else -> {
+                reply("live: unknown action '$action'. Known: cycle, stop, dismiss")
+            }
+        }
+    }
+
+    /**
+     * The button's intent, with the flag the button itself gets for free.
+     *
+     * `FLAG_RECEIVER_FOREGROUND` is not optional here, and leaving it off produced exactly
+     * the failure this file's own documentation warns about: modern Android defers a
+     * background broadcast while the app is not foregrounded, so `live --es action stop`
+     * replied "pressed stop" and then nothing happened — sometimes. When the app happened to
+     * be foreground it worked, which is the worst version of a bug, because the first run
+     * confirms the feature and the second contradicts it.
+     *
+     * A real press does not need this: a notification action's `PendingIntent` is delivered
+     * under the temporary allowlist the system grants the notification. So the flag makes the
+     * adb path *equal* to the button rather than privileged over it.
+     */
+    private fun surfaceIntent(
+        context: Context,
+        action: String,
+    ): Intent =
+        Intent(context, LiveActivityActionReceiver::class.java)
+            .setAction(action)
+            .addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
 
     private fun percent(value: Int?): String = value?.let { "$it%" } ?: "unknown"
 

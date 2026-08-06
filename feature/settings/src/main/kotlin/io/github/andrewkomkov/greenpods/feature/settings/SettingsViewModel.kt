@@ -1,5 +1,6 @@
 package io.github.andrewkomkov.greenpods.feature.settings
 
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.andrewkomkov.greenpods.core.data.PodRepository
@@ -9,6 +10,7 @@ import io.github.andrewkomkov.greenpods.core.data.update.UpdateSource
 import io.github.andrewkomkov.greenpods.core.data.update.UpdateStatus
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.HeadGestureBinding
+import io.github.andrewkomkov.greenpods.core.model.LiveActivityAvailability
 import io.github.andrewkomkov.greenpods.core.model.PodFeature
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import io.github.andrewkomkov.greenpods.core.model.ScanMode
@@ -30,7 +32,62 @@ data class SettingsUiState(
     val updateSummary: String = "",
     val updateUrl: String? = null,
     val health: HealthUiState = HealthUiState(),
+    val liveActivity: LiveActivityUiState = LiveActivityUiState(),
 )
+
+/**
+ * Whether this phone can show the live status surface, and the sentence that says why not.
+ *
+ * The sentence is carried as a **resource id and its arguments**, not as text. Those
+ * strings live in `app`, which a feature module must never depend on — but an id is an
+ * `Int`, and holding one costs this module no `R` reference at all. The screen resolves it
+ * with `stringResource` at the moment it draws, so the reason is rendered against the
+ * configuration in force *then*. Text resolved once when the view model was built would be
+ * pinned to that moment's locale, and a gate reason left in the previous language while the
+ * screen around it changed is exactly the kind of staleness nothing would report.
+ *
+ * Most phones will never show this surface: it arrives in Android 16 and GreenPods
+ * supports Android 8.0. That is exactly why the state carries a reason rather than a
+ * Boolean — those phones are still owed the difference between "mine can't" and "GreenPods
+ * is broken" (FR-014a, Principle II).
+ */
+data class LiveActivityUiState(
+    val availability: LiveActivityAvailability = LiveActivityAvailability.Available,
+    /** Zero when [availability] is `Available`; there is nothing to explain. */
+    @StringRes val reasonRes: Int = 0,
+    /**
+     * What [reasonRes] interpolates, in order.
+     *
+     * Carried alongside the id rather than pre-formatted into a string, so that a reason
+     * naming this phone's API level is as late-resolved as one that names nothing.
+     */
+    val reasonArgs: List<Any> = emptyList(),
+) {
+    val isAvailable: Boolean get() = availability.isAvailable
+
+    /**
+     * Whether there is a system screen to send the user back to.
+     *
+     * Only [LiveActivityAvailability.PromotionRefused] has one. An old platform cannot be
+     * argued with, a denied notification permission is asked for in the app, and a device
+     * that declined to promote *this* notification is reporting a fact about itself — none
+     * of those is a screen, and offering a button that lands somewhere unrelated is worse
+     * than offering none.
+     */
+    val hasRouteBack: Boolean get() = availability is LiveActivityAvailability.PromotionRefused
+}
+
+/**
+ * Reads the live surface's availability, with the id of the reason to show for it.
+ *
+ * An interface rather than `LiveActivityGate` itself for two reasons: the reason ids are
+ * resources this module cannot name, and the answer must be *read again* rather than
+ * held — the one state the user can undo is undone on a system screen, so it changes
+ * precisely while GreenPods is not in the foreground.
+ */
+fun interface LiveActivityStatusSource {
+    fun read(): LiveActivityUiState
+}
 
 /**
  * What this phone can do with these earbuds, in features rather than in transports.
@@ -94,6 +151,14 @@ class SettingsViewModel(
     private val updateChecker: UpdateSource,
     private val appVersion: String,
     /**
+     * Where the live surface's availability comes from, reason and all.
+     *
+     * Not optional and not defaulted: a default would have to claim one state or the
+     * other, and "available" is the answer that would quietly ship a switch this phone
+     * cannot honour.
+     */
+    private val liveActivity: LiveActivityStatusSource,
+    /**
      * Null where no health store is wired at all.
      *
      * The section then reports itself unavailable rather than vanishing — a missing
@@ -104,6 +169,15 @@ class SettingsViewModel(
 ) : ViewModel() {
     private val updateState = MutableStateFlow(UpdateUi())
     private val healthState = MutableStateFlow(HealthUiState())
+
+    /**
+     * Read once at construction so the section never renders an "unknown" state.
+     *
+     * The gate answers synchronously — three platform questions, no I/O — so there is no
+     * loading state to invent, and inventing one would put a spinner where a sentence
+     * belongs.
+     */
+    private val liveActivityState = MutableStateFlow(liveActivity.read())
 
     private data class UpdateUi(
         val checking: Boolean = false,
@@ -117,7 +191,8 @@ class SettingsViewModel(
             podRepository.primaryPod,
             updateState,
             healthState,
-        ) { settings, pod, update, healthUi ->
+            liveActivityState,
+        ) { settings, pod, update, healthUi, live ->
             SettingsUiState(
                 settings = settings,
                 deviceName = pod?.name.orEmpty(),
@@ -128,6 +203,7 @@ class SettingsViewModel(
                 updateSummary = update.summary,
                 updateUrl = update.url,
                 health = healthUi,
+                liveActivity = live,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(SUBSCRIPTION_TIMEOUT_MS), SettingsUiState())
 
@@ -202,6 +278,30 @@ class SettingsViewModel(
             }
         }
     }
+
+    /**
+     * Re-reads whether the live surface can be shown.
+     *
+     * Never cached across a resume, for the same reason the health state is not: the one
+     * unavailable state a user can undo — promotion refused — is undone on a *system*
+     * screen this app sends them to, so the answer changes exactly while GreenPods is in
+     * the background. A cached "refused" would then tell them their own fix did not work.
+     */
+    fun refreshLiveActivity() {
+        liveActivityState.value = liveActivity.read()
+    }
+
+    fun setLiveActivityEnabled(enabled: Boolean) = edit { it.copy(liveActivityEnabled = enabled) }
+
+    /**
+     * Whether the live surface may show the heart-rate *value*.
+     *
+     * It hides the number and never the disclosure (FR-018a). The two are not one setting
+     * with two effects: a user may decline to display their heart rate on a screen anyone
+     * could read, and may not have the accessory's optical sensor run without being told
+     * that it is running. Nothing here touches `SensingState.Disclosed`.
+     */
+    fun setLiveActivityShowHeartRate(enabled: Boolean) = edit { it.copy(liveActivityShowHeartRate = enabled) }
 
     fun setAutoPause(enabled: Boolean) = edit { it.copy(autoPauseEnabled = enabled) }
 

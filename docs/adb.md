@@ -158,6 +158,41 @@ Stop injecting and wait 30 s: `presence` becomes `OUT_OF_RANGE` and the levels a
 **dropped** rather than carried forward. A stale percentage shown as current is the failure
 that check exists to catch.
 
+### Pressing its buttons
+
+```bash
+gp --es cmd live --es action cycle     # ask the accessory for the next listening mode
+gp --es cmd live --es action stop      # stop heart-rate sensing, in the earbuds
+gp --es cmd live --es action dismiss   # swipe the surface away
+```
+
+These send the **same intents the buttons send**, to the same receiver and the same service.
+Not a shortcut past them into the gateway: a route that reached the gateway directly would
+prove the gateway works and say nothing about whether the button reaches it, which is the
+half that is new.
+
+`cycle` is the one to watch carefully, because it is where this transport's characteristic
+failure shows up:
+
+```bash
+gp --es cmd live                       # note the mode
+gp --es cmd live --es action cycle
+gp --es cmd live                       # the mode moves only once the accessory echoes it
+```
+
+An accepted write is not a change. If the second `live` shows the requested mode before the
+accessory has confirmed it, that is the bug — not a fast UI.
+
+`dismiss` exists because the alternative is swiping a notification, which a script cannot do,
+and it is the only way to reach the dismissal rule at all. After it, `live` must report
+`withheld=Dismissed` and keep reporting it across several state ticks — a surface that
+returns by itself is the failure the rule exists to prevent. Starting heart-rate sensing, or
+a different accessory arriving, are the two things allowed to bring it back.
+
+What the ordinary notification does after a dismissal is **not** disappear: a foreground
+service must have one. The dismissal buys the quiet notification instead of the promoted
+surface, and nothing more.
+
 ### Reading what the accessory says about its own sensors
 
 ```bash

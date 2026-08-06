@@ -113,5 +113,13 @@
             android:name=".service.PodMonitorService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <!--
+          The live surface's buttons. Not exported: these send commands to the user's
+          earbuds, and nothing outside GreenPods has any business asking for that.
+        -->
+        <receiver
+            android:name=".service.LiveActivityActionReceiver"
+            android:exported="false" />
     </application>
 </manifest>
