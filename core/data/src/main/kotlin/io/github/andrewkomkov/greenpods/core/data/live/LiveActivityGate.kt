@@ -40,6 +40,31 @@ interface LiveActivityPlatform {
 class LiveActivityGate(
     private val platform: LiveActivityPlatform,
 ) {
+    /**
+     * What the device said when it was actually shown a notification, if it has been.
+     *
+     * The three questions above are all answerable before building anything. Whether *this*
+     * notification qualifies is not, and the platform provides
+     * `hasPromotableCharacteristics()` precisely so an app can ask instead of assume — the
+     * permitted set of styles is something two Android documentation pages disagree about.
+     *
+     * An observation outranks a prediction, the same way a live AAP session outranks a
+     * stale probe: the other checks say what should be possible, this one says what
+     * happened.
+     */
+    @Volatile
+    private var observedRejection: String? = null
+
+    /** Records that the device declined to promote a notification we built. */
+    fun recordNotPromotable(reason: String) {
+        observedRejection = reason
+    }
+
+    /** Records that the device accepted one, clearing any earlier refusal. */
+    fun recordPromotable() {
+        observedRejection = null
+    }
+
     fun availability(): LiveActivityAvailability {
         // First, because it is the only one the user can do nothing about, and every other
         // answer would imply an action that would not help.
@@ -55,6 +80,10 @@ class LiveActivityGate(
         if (!platform.promotedNotificationsPermitted()) {
             return LiveActivityAvailability.PromotionRefused
         }
+
+        // Last, because it is the only answer that comes from having tried. Reporting it
+        // earlier would hide a refusal the user *can* undo behind one they cannot.
+        observedRejection?.let { return LiveActivityAvailability.NotPromotable(it) }
 
         return LiveActivityAvailability.Available
     }

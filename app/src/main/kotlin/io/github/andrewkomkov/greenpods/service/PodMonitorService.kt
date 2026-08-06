@@ -17,6 +17,7 @@ import io.github.andrewkomkov.greenpods.R
 import io.github.andrewkomkov.greenpods.core.data.battery.LowBatteryNotifier
 import io.github.andrewkomkov.greenpods.core.data.battery.LowBatteryWarning
 import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityDecision
+import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityGate
 import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityPolicy
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.PodState
@@ -196,6 +197,26 @@ class PodMonitorService : LifecycleService() {
                     LiveActivityNotification
                         .apply(baseBuilder(), this, decision.summary, promote = true)
                         .build()
+
+                // Ask the device whether this notification actually qualifies, rather than
+                // trusting that it does. The permitted set of styles is something two
+                // Android documentation pages disagree about, so the platform is the
+                // arbiter — and a refusal is surfaced as a gate reason rather than
+                // swallowed, which is the difference between a diagnosable feature and one
+                // that silently does nothing.
+                if (Build.VERSION.SDK_INT >= LiveActivityGate.MIN_SDK) {
+                    if (notification.hasPromotableCharacteristics()) {
+                        app.liveActivityGate.recordPromotable()
+                    } else {
+                        app.liveActivityGate.recordNotPromotable(
+                            "the notification does not have promotable characteristics",
+                        )
+                        // Post it anyway: it is still the foreground service's notification
+                        // and the service must have one. It simply will not be promoted.
+                        lastPosted = null
+                    }
+                }
+
                 getSystemService(NotificationManager::class.java)
                     .notify(ONGOING_NOTIFICATION_ID, notification)
             }

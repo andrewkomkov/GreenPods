@@ -89,7 +89,7 @@ rather than showing stale levels.
 - [x] T015 [US1] Unit-test the policy in `core/data/src/test/kotlin/io/github/andrewkomkov/greenpods/core/data/live/LiveActivityPolicyTest.kt` — including that a dismissed surface is not reposted on the next state tick, and that identical rendered content produces no re-post
 - [x] T016 [US1] Create `LiveActivityNotification` in `app/src/main/kotlin/io/github/andrewkomkov/greenpods/service/LiveActivityNotification.kt` — renders a `LiveActivitySummary` with `NotificationCompat`, sets `setRequestPromotedOngoing(true)`, `BigTextStyle`, `deleteIntent`; **never** sets a custom `RemoteViews`, `setColorized(true)` or `setGroupSummary(true)`, each of which disqualifies promotion (R-1)
 - [x] T017 [US1] Rewrite `buildOngoingNotification`/`updateOngoingNotification` in `app/src/main/kotlin/io/github/andrewkomkov/greenpods/service/PodMonitorService.kt` to use `NotificationCompat` and render through `LiveActivityNotification`, keeping the existing text exactly when the gate is unavailable (FR-014 — those phones get nothing new)
-- [ ] T018 [US1] Call `Notification.hasPromotableCharacteristics()` after building and map a `false` to `LiveActivityAvailability.NotPromotable(reason)` — R-4 leaves the permitted style genuinely unsettled between two Android docs, so the device is the arbiter and its answer is surfaced, not swallowed
+- [x] T018 [US1] Call `Notification.hasPromotableCharacteristics()` after building and map a `false` to `LiveActivityAvailability.NotPromotable(reason)` — R-4 leaves the permitted style genuinely unsettled between two Android docs, so the device is the arbiter and its answer is surfaced, not swallowed
 - [x] T019 [US1] Add the `live` command to `app/src/debug/kotlin/io/github/andrewkomkov/greenpods/debug/GreenPodsDebugReceiver.kt` per [contracts/live-surface.md](./contracts/live-surface.md) — availability, reason, posted, dismissed, accessory, presence, battery, charging, wear
 - [x] T020 [P] [US1] Document `gp --es cmd live` in `docs/adb.md` with runnable examples, in the same change as T019 (FR-021, Principle VI)
 
@@ -139,7 +139,7 @@ cease in the earbuds.
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T034 Verify on hardware that a foreground-service notification is actually promoted — the single assumption the whole feature rests on (research.md open items). Record the result in `docs/protocol-research.md` as a field note either way
+- [x] T034 Verify on hardware that a foreground-service notification is actually promoted — the single assumption the whole feature rests on (research.md open items). **Done 2026-08-06: `PROMOTED_ONGOING` set by the system, `BigTextStyle` qualifies.** Recorded in `docs/protocol-research.md`
 - [ ] T035 [P] Confirm the rapid-wear-change edge case produces no flicker, driven by repeated `inject` calls
 - [ ] T036 [P] Confirm notifications-denied behaviour: service still runs, surface absent, nothing senses silently (quickstart section 6)
 - [x] T037 Run `./gradlew spotlessCheck lintDebug testDebugUnitTest` and fix anything it finds

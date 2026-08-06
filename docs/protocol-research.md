@@ -571,6 +571,43 @@ join, and are explicitly out of scope:
 
 Things learned by running GreenPods on real hardware, as opposed to from captures.
 
+### A foreground-service notification does get promoted — 2026-08-06
+
+The single assumption the live-activity feature rested on, settled on hardware. Pixel 8,
+Android 17 (API 37).
+
+Two things were genuinely unknown and both came out in favour:
+
+**A foreground-service notification is promotable.** The documentation says it can be if it
+qualifies, which is not the same as saying it will. `dumpsys notification` on the running
+service:
+
+```
+flags=ONGOING_EVENT|NO_CLEAR|FOREGROUND_SERVICE|PROMOTED_ONGOING
+originalFlags=ONGOING_EVENT|FOREGROUND_SERVICE|PROMOTED_ONGOING
+android.template=android.app.Notification$BigTextStyle
+android.requestPromotedOngoing=Boolean (true)
+```
+
+`PROMOTED_ONGOING` is set by the system, not by us — `requestPromotedOngoing` is the
+request and the flag is the answer. It also appears as a chip on the lock screen.
+
+**`BigTextStyle` qualifies.** Two Android documentation pages disagree about the permitted
+styles — one lists standard, `BigTextStyle`, `CallStyle`, `ProgressStyle` and `MetricStyle`,
+another only the middle three. `hasPromotableCharacteristics()` returned true, so the
+question is answered for this style on this platform. The check stays in the code regardless:
+it is what turns a future refusal into a stated reason rather than a feature that quietly
+stops working.
+
+Also confirmed, from the notification's own text: `Left 80% · Right 90% · Case —`. An
+unreported case renders as a dash, not `0%`.
+
+**A separate defect found while verifying it.** `gp --es cmd set` answered `set foo=bar` for
+*any* key and silently changed nothing when the key had no branch — indistinguishable from
+success. It had cost exactly that: `liveActivityEnabled=off` was reported as applied while
+the surface carried on posting. Unknown keys now say so and list the known ones, and the
+list is cross-checked against the branches.
+
 ### Remembered services never reached the features that needed them — 2026-08-05
 
 Heart rate sat in `STARTING` with `service=none` indefinitely on a phone where the very

@@ -587,12 +587,27 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                         )
                     }
 
+                    "liveActivityEnabled" -> {
+                        current.copy(liveActivityEnabled = on)
+                    }
+
+                    "liveActivityShowHeartRate" -> {
+                        current.copy(liveActivityShowHeartRate = on)
+                    }
+
                     else -> {
                         current
                     }
                 }
             }
-            reply("set $key=$value")
+            // An unknown key used to answer "set foo=bar" and change nothing, which is
+            // indistinguishable from success — and cost exactly that: a setting reported as
+            // applied while the surface carried on ignoring it. Say so instead.
+            if (key in KNOWN_SETTING_KEYS) {
+                reply("set $key=$value")
+            } else {
+                reply("set: unknown key '$key'. Known: ${KNOWN_SETTING_KEYS.joinToString()}")
+            }
         }
     }
 
@@ -706,6 +721,30 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
          * for an accessory that was about to describe itself.
          */
         const val DESCRIBE_WAIT_MILLIS = 3_000L
+
+        /**
+         * Every key `set` actually acts on.
+         *
+         * Listed rather than derived because the `when` above is the only other place that
+         * knows, and a key present in one and missing from the other is precisely the bug
+         * this exists to catch.
+         */
+        val KNOWN_SETTING_KEYS =
+            listOf(
+                "autoPause",
+                "autoResume",
+                "pauseOnlyWhenBothOut",
+                "backgroundMonitoring",
+                "lowBatteryWarning",
+                "lowBatteryThreshold",
+                "scanMode",
+                "headGestures",
+                "hrIntervalMs",
+                "hrConfidenceThreshold",
+                "hrHealthConnect",
+                "liveActivityEnabled",
+                "liveActivityShowHeartRate",
+            )
 
         /** The window `health count` looks back over when none is given. */
         const val DEFAULT_HEALTH_WINDOW_MINUTES = 10L
