@@ -447,7 +447,7 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                     }
                     val sensing = pod.heartRateSensing
                     reply(
-                        "hr: state=${pod.heartRate.stateName} enabled=${sensing.enabled} " +
+                        "hr: ticks=${sensing.ticksSeen} state=${pod.heartRate.stateName} enabled=${sensing.enabled} " +
                             "source=${sensing.source ?: "none"} " +
                             "service=${sensing.serviceId?.let { "0x%02X".format(it) } ?: "none"} " +
                             "interval=${sensing.requestedIntervalMicros?.div(1000) ?: 0}ms " +

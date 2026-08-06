@@ -153,6 +153,14 @@ class HeartRateController(
      */
     private val askTasks = Channel<String>(capacity = ASK_QUEUE_CAPACITY, onBufferOverflow = BufferOverflow.DROP_LATEST)
 
+    /**
+     * Ticks that have actually reached the state machine.
+     *
+     * Not on the session, because it is a fact about the controller's clock rather than
+     * about any accessory: every session's timeouts stop together when it stops.
+     */
+    private var ticksSeen: Int = 0
+
     private sealed interface SinkTask {
         data class Trusted(
             val pod: PodState,
@@ -213,6 +221,7 @@ class HeartRateController(
                     }
 
                     Input.Tick -> {
+                        ticksSeen++
                         latestPods.forEach { pod -> checkForStall(pod) }
                     }
                 }
@@ -467,7 +476,11 @@ class HeartRateController(
         if (session.state is HeartRateState.Measuring) {
             val since = clock() - session.lastReportAtMillis
             if (session.lastReportAtMillis > 0L && since >= reportGapMillis(session)) {
-                session.state = HeartRateState.Uncertain(session.lastTrustedAtMillis)
+                session.state =
+                    HeartRateState.Uncertain(
+                        session.lastTrustedAtMillis,
+                        HeartRateState.Uncertain.Cause.NO_REPORTS,
+                    )
                 publish(pod)
             }
             return
@@ -513,7 +526,7 @@ class HeartRateController(
 
     private fun publish(pod: PodState) {
         val session = sessions[pod.address] ?: return
-        publish(pod.address, session.state, session.sensing())
+        publish(pod.address, session.state, session.sensing(ticksSeen))
     }
 
     private class Session {
@@ -545,7 +558,7 @@ class HeartRateController(
         /** Rate-limits the "describe your services" request. See `askForServices`. */
         var lastAskedAtMillis: Long = 0L
 
-        fun sensing(): HeartRateSensing =
+        fun sensing(ticks: Int): HeartRateSensing =
             HeartRateSensing(
                 enabled = enabled,
                 requestedIntervalMicros = requestedIntervalMicros,
@@ -555,6 +568,7 @@ class HeartRateController(
                 trustedCount = trustedCount,
                 discardedImplausible = discardedImplausible,
                 lastStopReason = lastStopReason,
+                ticksSeen = ticks,
             )
     }
 
