@@ -24,6 +24,7 @@ import androidx.compose.material3.FloatingToolbarDefaults
 import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -37,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -96,48 +98,80 @@ fun GreenPodsApp(
     // place they can go without a reading to look at.
     val onHeartRate = current?.hierarchy?.any { it.route == HEART_RATE_ROUTE } == true
     val onHeadGestures = current?.hierarchy?.any { it.route == HEAD_GESTURES_ROUTE } == true
-    val pushed = onHeartRate || onHeadGestures
+
+    /**
+     * Anything that is not one of the toolbar's destinations was pushed on top of one, and
+     * therefore needs a way back.
+     *
+     * Derived rather than listed. This used to enumerate the pushed routes by hand, which
+     * meant a screen added later got no back arrow until somebody remembered to come back
+     * and edit this line — and nothing would have said so. Asking "is this a tab?" cannot
+     * drift, because adding a tab is what changes the answer.
+     */
+    val pushed =
+        current != null &&
+            GreenPodsDestination.entries.none { destination ->
+                current.hierarchy.any { it.route == destination.route }
+            }
+
+    val title =
+        when {
+            onHeartRate -> {
+                "Heart rate"
+            }
+
+            onHeadGestures -> {
+                "Head gestures"
+            }
+
+            else -> {
+                GreenPodsDestination.entries
+                    .firstOrNull { destination ->
+                        current?.hierarchy?.any { it.route == destination.route } == true
+                    }?.let { if (it == GreenPodsDestination.PODS) "GreenPods" else it.label }
+                    ?: "GreenPods"
+            }
+        }
+
+    // The title collapses as the content scrolls under it, which is what gives a screen a
+    // top rather than a label floating above it.
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
     Scaffold(
-        modifier = modifier,
+        modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         // Edge to edge, properly. The bars used to be opaque bands the content stopped
         // at; now the app paints the whole display and the system bars sit over it, which
         // is what makes a phone feel like it is running one app rather than framing one.
         containerColor = MaterialTheme.colorScheme.surface,
         contentWindowInsets = WindowInsets(0),
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        when {
-                            onHeartRate -> {
-                                "Heart rate"
-                            }
-
-                            onHeadGestures -> {
-                                "Head gestures"
-                            }
-
-                            else -> {
-                                GreenPodsDestination.entries
-                                    .firstOrNull { destination ->
-                                        current?.hierarchy?.any { it.route == destination.route } == true
-                                    }?.let { if (it == GreenPodsDestination.PODS) "GreenPods" else it.label }
-                                    ?: "GreenPods"
-                            }
-                        },
-                    )
-                },
-                colors =
-                    TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                navigationIcon = {
-                    if (pushed) {
-                        IconButton(onClick = { navController.popBackStack() }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
+            val back: @Composable () -> Unit = {
+                if (pushed) {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                },
-            )
+                }
+            }
+            val colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+
+            // Large where the screen is a destination, small where it is pushed on top of
+            // one. A pushed screen is somewhere you already are and came from; giving it
+            // the same weight as a destination flattens that difference and wastes the
+            // space the content came for.
+            if (pushed) {
+                TopAppBar(
+                    title = { Text(title) },
+                    colors = colors,
+                    navigationIcon = back,
+                    scrollBehavior = scrollBehavior,
+                )
+            } else {
+                LargeFlexibleTopAppBar(
+                    title = { Text(title) },
+                    colors = colors,
+                    scrollBehavior = scrollBehavior,
+                )
+            }
         },
     ) { padding ->
 
@@ -181,12 +215,6 @@ fun GreenPodsApp(
                         onRequestPermission = onRequestPermission,
                         onOpenBluetoothSettings = onOpenBluetoothSettings,
                         onRetryScan = viewModel::retryScan,
-                        onPodSelected = { pod ->
-                            viewModel.probeTransports(pod.address)
-                            navController.navigate(GreenPodsDestination.CONTROLS.route) {
-                                launchSingleTop = true
-                            }
-                        },
                         onOpenHeartRate = {
                             navController.navigate(HEART_RATE_ROUTE) { launchSingleTop = true }
                         },
