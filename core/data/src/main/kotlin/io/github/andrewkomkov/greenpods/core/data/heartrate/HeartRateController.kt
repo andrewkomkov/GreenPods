@@ -405,6 +405,7 @@ class HeartRateController(
         session.reportsReceived++
         session.running = true
         session.source = reading.source
+        session.lastReportAtMillis = clock()
 
         when (policy.verdict(reading, session.trustedThisSession)) {
             HeartRateVerdict.TRUSTED -> {
@@ -451,6 +452,27 @@ class HeartRateController(
     private suspend fun checkForStall(pod: PodState) {
         val session = sessions[pod.address] ?: return
         if (!session.running && session.state !is HeartRateState.Starting) return
+
+        // A converged session that has stopped receiving reports.
+        //
+        // Nothing used to check this: the stall check only ran while settling, so once a
+        // session reached `Measuring` the last reading stayed on screen for ever if the
+        // stream stopped — the sensor switched off in the earbuds, the channel dropped,
+        // the bud carrying the sensor came out. Observed on hardware 2026-08-06 as a BPM
+        // frozen on the card after the sensor had demonstrably stopped.
+        //
+        // `Uncertain` is exactly the state for it, and already exists: the number is
+        // withdrawn and the session stays up, because a stale reading shown as current is
+        // the one outcome this feature must never produce.
+        if (session.state is HeartRateState.Measuring) {
+            val since = clock() - session.lastReportAtMillis
+            if (session.lastReportAtMillis > 0L && since >= reportGapMillis(session)) {
+                session.state = HeartRateState.Uncertain(session.lastTrustedAtMillis)
+                publish(pod)
+            }
+            return
+        }
+
         val settling = session.state is HeartRateState.Starting || session.state is HeartRateState.Settling
         if (!settling) return
         if (clock() - session.startedAtMillis < settleTimeoutMillis) return
@@ -463,6 +485,19 @@ class HeartRateController(
             }
         stop(pod, session, reason)
         publish(pod)
+    }
+
+    /**
+     * How long a gap between reports means the stream has stopped rather than slipped.
+     *
+     * Scaled to what was actually asked of the accessory, not a constant: at 1 Hz a
+     * four-second silence is a stall, and at the 60-second maximum interval it is normal.
+     * A fixed timeout would either withdraw good readings on a slow session or leave a
+     * frozen one on screen for a minute on a fast one.
+     */
+    private fun reportGapMillis(session: Session): Long {
+        val intervalMillis = (session.requestedIntervalMicros ?: 0) / 1_000L
+        return (intervalMillis * MISSED_REPORTS_BEFORE_STALE).coerceAtLeast(MIN_STALE_GAP_MILLIS)
     }
 
     private fun reasonFor(
@@ -490,6 +525,15 @@ class HeartRateController(
         var state: HeartRateState = HeartRateState.Off
         var startedAtMillis: Long = 0L
         var lastTrustedAtMillis: Long? = null
+
+        /**
+         * When a report last arrived, of any confidence.
+         *
+         * Distinct from [lastTrustedAtMillis]: a stream that is delivering low-confidence
+         * readings is alive and settling, and a stream that has stopped is neither. Only
+         * this one can tell the difference.
+         */
+        var lastReportAtMillis: Long = 0L
 
         /** Whether this session has *ever* converged — the input to the policy's hysteresis. */
         var trustedThisSession: Boolean = false
@@ -574,6 +618,18 @@ class HeartRateController(
          * beats a spinner that never resolves.
          */
         const val SETTLE_TIMEOUT_MILLIS = 30_000L
+
+        /**
+         * Missed reports before a converged reading is withdrawn.
+         *
+         * Four rather than one: reports slip by a few hundred milliseconds routinely, and
+         * withdrawing a good number because one was late would flicker the card. Four in a
+         * row is a stream that has stopped.
+         */
+        const val MISSED_REPORTS_BEFORE_STALE = 4
+
+        /** Floor, so a very fast interval does not withdraw a reading on ordinary jitter. */
+        const val MIN_STALE_GAP_MILLIS = 4_000L
 
         private const val TICK_MILLIS = 1_000L
 
