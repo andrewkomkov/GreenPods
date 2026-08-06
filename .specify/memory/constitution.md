@@ -101,6 +101,27 @@ not a system modification, and every Bluetooth permission is still enforced. It 
 narrow to two class prefixes rather than opening the framework, and features that would
 need genuine root, such as anything behind vendor-identity spoofing, remain out of scope.
 
+### VIII. Every screen says how to leave it
+
+No screen is reachable that the user cannot get out of using what is on it. A pushed
+screen carries a back affordance; a screen that is not pushed is reachable from the
+persistent navigation. "The system back gesture exists" is not the answer — it is
+invisible, it is the one control an unfamiliar user does not try, and on a screen with
+nothing else to press it reads as being stuck in the app rather than as a way out.
+
+The rule is about the *mechanism*, not about the count of screens that happen to comply
+today. An audit on 2026-08-06 found no dead end in GreenPods — but the back affordance was
+decided by a hand-written list of two routes, so a third pushed screen would have shipped
+without one and nothing would have said so. That is what this principle forbids: not the
+bug, the arrangement that makes the bug silent and inevitable.
+
+So: the presence of a way out is **derived from the navigation structure**, never
+enumerated. Asking "is this one of the persistent destinations?" cannot drift, because
+adding a destination is the thing that changes the answer. A list can drift, and will.
+
+A screen that deliberately traps the user — a required setup step, a destructive
+confirmation — must say why, and must still offer something to press.
+
 ## Technical Constraints
 
 - Kotlin, Compose, Material 3 Expressive. `minSdk` 26, `compileSdk`/`targetSdk` from
@@ -134,10 +155,17 @@ Amendments require updating this file and any spec it invalidates in the same ch
 What is learned about the protocol is written to `docs/protocol-research.md`; that file
 is the project's memory and is updated in the same commit as the code that learned it.
 
-**Version**: 1.1.0 | **Ratified**: 2026-08-03 | **Last Amended**: 2026-08-04
+**Version**: 1.2.0 | **Ratified**: 2026-08-03 | **Last Amended**: 2026-08-06
 
 Amendment 1.1.0 — the AAP channel was shown to work on unrooted Android. Principle I no
 longer describes it as usually unavailable, and gains the two rules that failure taught:
 a live session outranks a probe, and a write is not a change until the accessory confirms
 it. Principle V gains the converse of "no fiction": an absence must not be recorded as an
 impossibility. Principle VII places the non-SDK exemption inside the unrooted baseline.
+
+Amendment 1.2.0 — adds Principle VIII, every screen says how to leave it. Prompted by an
+audit that found no dead end and a mechanism that guaranteed a future one: the back
+affordance was chosen by a hand-written list of routes, so the next pushed screen would
+have shipped without a way out and nothing would have reported it. The principle is
+therefore written against the arrangement rather than the symptom — a way out is derived
+from the navigation structure, never enumerated.
