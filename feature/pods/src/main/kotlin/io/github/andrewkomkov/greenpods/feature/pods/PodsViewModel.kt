@@ -11,7 +11,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -111,11 +114,32 @@ class PodsViewModel(
     fun retryScan() = repository.retryScan()
 
     /**
-     * Asks the transport gate about an accessory the user tapped. Probing every device
-     * that walks past would drain the battery for an answer that is almost always "no".
+     * Asks the transport gate about an accessory, once, as soon as one is on screen.
+     *
+     * This used to be a button — "What this phone can control" — and the button existed
+     * because the probe was manual. That got the burden backwards: until someone pressed
+     * it, every feature the channel carries was shown locked, so the app's own main screen
+     * told the truth only about a state it had never checked. A user pressing a button to
+     * find out what their phone can do is the app asking them to do its work.
+     *
+     * The old worry was battery: probing every device that walks past costs a connection
+     * attempt for an answer that is almost always "no". That worry is answered by *which*
+     * accessories reach here, not by a button. The list has held only accessories this
+     * phone is bonded to since v0.3.0, and the gate enforces probe-once — so this is at
+     * most one attempt per accessory the user actually owns.
      */
-    fun probeTransports(address: String) {
-        viewModelScope.launch { repository.probeAap(address) }
+    private fun probeWhenSeen() {
+        viewModelScope.launch {
+            repository.primaryPod
+                .map { pod -> pod?.address }
+                .filterNotNull()
+                .distinctUntilChanged()
+                .collect { address -> repository.probeAap(address) }
+        }
+    }
+
+    init {
+        probeWhenSeen()
     }
 
     private companion object {

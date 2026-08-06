@@ -41,12 +41,16 @@ fun BatteryRing(
     charging: Boolean,
     modifier: Modifier = Modifier,
     caption: String = "",
-    size: androidx.compose.ui.unit.Dp = 72.dp,
+    size: androidx.compose.ui.unit.Dp = 88.dp,
 ) {
     val target = (levelPercent ?: 0) / 100f
     val progress by animateFloatAsState(target, GreenPodsMotion.defaultSpatial(), label = "battery-$label")
 
-    val track = MaterialTheme.colorScheme.surfaceVariant
+    // Contrast against the card, not against the window. `surfaceVariant` sits almost on
+    // top of a filled card's own colour, so the ring vanished and an unknown level read as
+    // a bare dash floating in space — the case, which is unknown most of the time, looked
+    // like a rendering fault rather than like a gauge with nothing in it.
+    val track = MaterialTheme.colorScheme.onSurface.copy(alpha = TRACK_ALPHA)
     val indicator =
         when {
             levelPercent == null -> track
@@ -121,4 +125,7 @@ fun BatteryRing(
 private const val START_ANGLE = 135f
 private const val FULL_SWEEP = 270f
 private const val STROKE_FRACTION = 0.11f
+
+/** Visible on a filled card without competing with the level itself. */
+private const val TRACK_ALPHA = 0.14f
 private const val LOW_BATTERY = 20
