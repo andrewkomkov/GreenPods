@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/andrewkomkov/GreenPods/compare/v0.4.0...v0.5.0) (2026-08-06)
+
+
+### Features
+
+* let the app check what the phone can do, and give the start screen a top ([#11](https://github.com/andrewkomkov/GreenPods/issues/11)) ([cf57cf2](https://github.com/andrewkomkov/GreenPods/commit/cf57cf276ca785a5f33e49b001e450882472b0b8))
+
+
+### Bug Fixes
+
+* **data:** withdraw a heart rate that has stopped arriving ([#13](https://github.com/andrewkomkov/GreenPods/issues/13)) ([b901bdf](https://github.com/andrewkomkov/GreenPods/commit/b901bdf0522ada70354657a6fa0c0fc8da03a20f))
+
 ## [0.4.0](https://github.com/andrewkomkov/GreenPods/compare/v0.3.1...v0.4.0) (2026-08-06)
 
 
