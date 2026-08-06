@@ -571,6 +571,47 @@ join, and are explicitly out of scope:
 
 Things learned by running GreenPods on real hardware, as opposed to from captures.
 
+### The heart-rate controller's clock stops, and takes two timeouts with it — 2026-08-06
+
+**Open. Not diagnosed, and it disables a fix that was shipped the same day.**
+
+Observed on a fresh Bluetooth link, Pixel 8 / AirPods Pro 3, with the accessory's services
+freshly announced and visible to `gp --es cmd hid` — four services including heart rate:
+
+```
+[15s]  state=STARTING service=none reports=308
+[120s] state=STARTING service=none reports=308
+```
+
+Two things are wrong and they are probably the same thing.
+
+**The controller never learns a service the decoder already has.** `hid` lists the
+heart-rate service from the same channel, at the same moment, while `hr status` reports
+`service=none`. This is the shape of the bug fixed the day before — remembered services not
+being announced — but that fix does not cover this case, and the cause here is not yet
+known.
+
+**The 30-second no-convergence timeout never fires.** Two minutes in `STARTING` with a
+30-second timeout is not a slow timeout, it is a timeout that is not running. It is driven
+by `ticks`, collected on the same single collector as pods, AAP events and GATT readings.
+
+`HeartRateController` already carries a comment describing exactly this failure — "doing
+that on the single collector that owns the state machine stops the clock: ticks queue
+behind it, the no-convergence timeout never fires, and the user watches a spinner that
+cannot resolve. Measured on hardware" — and the *ask* path was moved onto a channel because
+of it. `startAap` still awaits `commands.startHeartRate`, which opens a channel, waits for
+it to be writable, and writes to a `BluetoothSocket` that has no write timeout. That is a
+candidate, not a conclusion: in the captured case the service id was null, so the start
+path was never reached.
+
+**Why this matters beyond the spinner.** The stale-reading withdrawal added in v0.5.0 runs
+on the same tick. If ticks are starved, a frozen heart rate is *not* withdrawn on this
+device, whatever the unit tests say — the fix is correct in the state machine and inert in
+production until the clock runs. That is the honest status of it.
+
+Next step is to establish whether ticks arrive at all — a counter on the tick branch would
+settle it in one run — before changing anything.
+
 ### A foreground-service notification does get promoted — 2026-08-06
 
 The single assumption the live-activity feature rested on, settled on hardware. Pixel 8,
