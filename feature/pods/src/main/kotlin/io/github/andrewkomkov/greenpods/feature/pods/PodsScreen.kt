@@ -35,7 +35,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.andrewkomkov.greenpods.core.designsystem.component.BatteryRing
-import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilityRow
+import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilitySummary
 import io.github.andrewkomkov.greenpods.core.designsystem.component.CapabilityUi
 import io.github.andrewkomkov.greenpods.core.model.PodFeature
 import io.github.andrewkomkov.greenpods.core.model.PodState
@@ -52,7 +52,6 @@ fun PodsScreen(
     onRequestPermission: () -> Unit = {},
     onOpenBluetoothSettings: () -> Unit = {},
     onRetryScan: () -> Unit = {},
-    onPodSelected: (PodState) -> Unit = {},
     onOpenHeartRate: (PodState) -> Unit = {},
     onTurnOnHeartRate: () -> Unit = {},
 ) {
@@ -76,7 +75,6 @@ fun PodsScreen(
             PodCard(
                 pod = pod,
                 heartRate = state.heartRateOf(pod),
-                onCheckControl = { onPodSelected(pod) },
                 onOpenHeartRate = { onOpenHeartRate(pod) },
                 onTurnOnHeartRate = onTurnOnHeartRate,
             )
@@ -89,7 +87,6 @@ private fun PodCard(
     pod: PodState,
     heartRate: HeartRateUi,
     modifier: Modifier = Modifier,
-    onCheckControl: () -> Unit = {},
     onOpenHeartRate: () -> Unit = {},
     onTurnOnHeartRate: () -> Unit = {},
 ) {
@@ -136,11 +133,13 @@ private fun PodCard(
 
             // Gated features are shown alongside usable ones so the absence of a
             // control reads as a platform limit rather than a missing feature.
-            CapabilityRow(capabilities = pod.headlineCapabilities())
-
-            Button(onClick = onCheckControl, modifier = Modifier.fillMaxWidth()) {
-                Text("What this phone can control")
-            }
+            //
+            // There used to be a "What this phone can control" button under here. It is
+            // gone: the app probes the transport itself as soon as it sees an accessory,
+            // so these chips are already the answer that button went to fetch. Asking a
+            // user to press something to find out what their phone can do was the app
+            // asking them to do its work.
+            CapabilitySummary(capabilities = pod.headlineCapabilities())
         }
     }
 }
