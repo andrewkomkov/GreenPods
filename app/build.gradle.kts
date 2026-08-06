@@ -23,7 +23,7 @@ android {
 
         // release-please rewrites the literal below on every release; the version
         // code is derived from it so there is only one number to maintain.
-        versionName = "0.3.1" // x-release-please-version
+        versionName = "0.4.0" // x-release-please-version
         versionCode = versionCodeFrom(versionName!!)
     }
 

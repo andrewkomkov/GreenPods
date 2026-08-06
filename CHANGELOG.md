@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/andrewkomkov/GreenPods/compare/v0.3.1...v0.4.0) (2026-08-06)
+
+
+### Features
+
+* live activities — the gate and the read-only surface ([#10](https://github.com/andrewkomkov/GreenPods/issues/10)) ([4086ab1](https://github.com/andrewkomkov/GreenPods/commit/4086ab1dd91887f3c747f4b78d1d5e1ae66ddb7c))
+
+
+### Documentation
+
+* **spec:** specify live activities ([#8](https://github.com/andrewkomkov/GreenPods/issues/8)) ([edaa3db](https://github.com/andrewkomkov/GreenPods/commit/edaa3dbd7fe60b73d8edbb650561ef0f1ab0d2d3))
+
 ## [0.3.1](https://github.com/andrewkomkov/GreenPods/compare/v0.3.0...v0.3.1) (2026-08-05)
 
 
