@@ -43,21 +43,52 @@ gp() {
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-# Prints only what the app said since the previous call, so each step's output is its own.
-SEEN=0
-drain() {
-  local all total
-  all=$(adb logcat -d -s GreenPodsDebug 2>/dev/null | sed -n 's/^.*GreenPodsDebug *: //p')
-  total=$(printf '%s\n' "$all" | grep -c '')
-  printf '%s\n' "$all" | tail -n +$((SEEN + 1))
-  SEEN=$total
+# The transcript is assembled from logcat, so two counters are needed and they are different
+# things: PRINTED is how much has already been shown, and total() is how much exists now.
+PRINTED=0
+
+lines() {
+  adb logcat -d -s GreenPodsDebug 2>/dev/null | sed -n 's/^.*GreenPodsDebug *: //p'
 }
 
+total() { lines | grep -c ''; }
+
+# Shows everything that arrived since the last call.
+drain() {
+  lines | tail -n +$((PRINTED + 1))
+  PRINTED=$(total)
+}
+
+# How long to wait for a reply before giving up on one. Ten seconds clears the eight-second
+# `awaitPods` that the slowest commands sit behind.
+STEP_TIMEOUT_SECONDS=10
+
+# Waits for the app to go quiet rather than for a fixed interval.
+#
+# A fixed two seconds was wrong, and a dry run against an emulator showed how: `probe`, `hid`
+# and every `cal` action that names an accessory go through that `awaitPods`, so their reply
+# landed after the next command had printed its heading and was attributed to it. That is the
+# failure `set` had - an outcome indistinguishable from another one - and it is worse here,
+# because the point of this script is a transcript somebody reads later.
 step() {
   printf '$ gp %s\n' "$*"
   gp "$@"
-  sleep 2
+
+  local waited=0 quiet=0 seen_before now
+  while [ "$waited" -lt "$STEP_TIMEOUT_SECONDS" ]; do
+    seen_before=$(total)
+    sleep 1
+    waited=$((waited + 1))
+    now=$(total)
+    if [ "$now" -ne "$seen_before" ]; then
+      quiet=0
+    elif [ "$now" -gt "$PRINTED" ]; then
+      quiet=$((quiet + 1))
+      [ "$quiet" -ge 2 ] && break
+    fi
+  done
   drain
+  echo
 }
 
 hold() {
