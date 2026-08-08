@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-04
 
-**Status**: Draft
+**Status**: Partly delivered — see "Delivery status", audited against the code on 2026-08-08
 
 **Input**: Full feature parity with LibrePods for everything reachable on an unrooted
 Android phone over the now-working AAP channel, with nothing behind a paywall.
@@ -320,6 +320,51 @@ audio profile and confirm it survives a reconnect.
 - **SC-007**: An idle session costs no more battery than the existing background
   monitoring does today, measured over an hour with the app in the background.
 - **SC-008**: No capability in this specification is gated behind payment.
+
+## Delivery status
+
+**Audited against the code on 2026-08-08.** This feature is the odd one out in `specs/`: it
+has a spec and a requirements checklist, and it never got a `plan.md` or a `tasks.md`. Parts of
+it shipped anyway, across releases 0.2 to 0.5. That is exactly the failure the spec-kit rule
+exists to prevent, and the honest repair is not a tasks list back-dated to match the code — it
+is this section, which says what is there and what is not, so the difference stops living in
+nobody's head. What follows was read off the code, not off memory.
+
+The discriminator used throughout: the app **writes** a setting only where a
+`ControlCommand` is actually sent. The protocol layer decodes far more than the app can
+change, and a decoded setting is not a delivered one.
+
+**Delivered.** `LISTENING_MODE` (FR-009), `AUTO_ANC_STRENGTH` (FR-010),
+`CONVERSATION_DETECT_CONFIG` (FR-011), `LISTENING_MODE_CONFIGS` (FR-015), `EAR_DETECTION`
+(FR-025) and `CLICK_HOLD_MODE` — the long-press binding. With them the session and gate
+requirements FR-001 to FR-008, the battery and wear reporting FR-023, FR-024 and FR-026, the
+head-tracking stream FR-022 and the nod-to-answer binding FR-021, plus the adb and
+unhandled-traffic requirements FR-032 to FR-034.
+
+**Not delivered, and each one is decoded but never written**: adaptive and personalised
+volume (FR-012), the audio profile (FR-013), single, double and triple press bindings (FR-014
+— only the long press is bound), press speed and hold duration (FR-016), volume swipe
+(FR-017), one-bud noise cancellation (FR-018), call controls (FR-019), and pausing media when
+falling asleep (FR-020). Each has a `ControlCommand` in `AapProtocol` and no caller.
+
+**Not delivered.** Renaming (FR-027) has an opcode — `Opcode.RENAME`, `0x001E` — and no caller
+anywhere, so it is a named constant rather than a feature. The identity-resolving and
+encryption keys (FR-028 to FR-031) have no representation at all: the encrypted tail of the BLE
+advertisement is untouched, and `CLAUDE.md` still lists it as unreached.
+
+**Moved out into features of their own**, which is why they are absent here rather than
+missing: heart rate became `specs/003-heart-rate`, the head-tracking scale became
+`specs/004-head-tracking-calibration`, and the lock-screen surface became
+`specs/005-live-activities`.
+
+**Consequence for the success criteria.** SC-005 and SC-006 are claims about *every control in
+this specification*, and roughly half of those controls do not exist yet — so neither can be
+assessed as written. They are true of what shipped and unproven of what did not, and quoting
+either as met would be quoting them about a smaller feature than the one specified.
+
+Anything picked up from the "not delivered" list above needs its own numbered feature folder
+with a plan and tasks, per the constitution. Reopening this one would repeat the mistake it
+documents.
 
 ## Out of Scope
 
