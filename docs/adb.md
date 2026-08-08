@@ -386,6 +386,15 @@ gp --es cmd inject --es model 0x1420 --ei left 70 --ei right 70
 gp --es cmd cal --es value start
 ```
 
+**`inject` needs this phone to be paired to an Apple or Beats audio accessory**, even though
+nothing has to be in range. An advertisement that resolves to no bond is somebody else's and
+is discarded on the way in — that filter is `BondedPodResolver`, it exists because a
+stranger's AirPods once took the bonded key, and injection walks the same path deliberately.
+On a phone that has never paired one, `inject` still reports `accepted=true` and the sighting
+is dropped a step later; `dump` then shows `"pods":[]` with an `Ignoring a nearby …` entry in
+`diagnostics`, and every `cal` action that names an accessory refuses. Nothing about the
+wizard is broken in that case, and there is no adb path around it.
+
 ```
 cal: started — model=AIRPODS_PRO_2 address=DE:B0:60:00:00:01 poses=4 (neutral first, then one per axis)
 cal: nothing is stored until 'cal finish'; 'cal abandon' leaves any stored calibration untouched
@@ -410,32 +419,48 @@ be indistinguishable from success.
 ### Feeding poses with no earbuds and no head
 
 ```bash
-gp --es cmd cal --es value feed --es samples "60@0,0,0;60@6290,0,0"
+gp --es cmd cal --es value feed --es samples '"60@0,0,0;60@6290,0,0"'
 ```
+
+**Quote the spec twice.** `adb shell` hands the whole command to a shell *on the device*, and
+that shell splits at `;` — so `--es samples "a;b"` delivers only `a`, and the rest is run as a
+separate command that fails silently. The extra quotes are what survive the trip. This is not
+cosmetic: the single-quoted form above feeds four poses, the double-quoted form feeds one and
+leaves the run sitting on pose two looking like the wizard stalled.
 
 The spec is `count@o1,o2,o3[,horizontal,vertical][~jitter]`, semicolon-separated. Each
 segment fills one pose's hold, advancing to the next pose as each hold completes, and the
 samples are spread evenly across the hold — so `60@…` is a full hold with sixty samples in
 it, and `8@…` is a hold too short to measure anything.
 
+A segment that produces no held plateau **does not advance the pose** — the wizard stays on it
+so it can be repeated or skipped (FR-015). A following segment therefore lands on the *same*
+pose, not the next one, and a run driven by one long spec silently shifts. Feed the failing
+pose on its own, read `cal status`, then `cal skip` or `cal repeat`.
+
 `~n` adds a **deterministic** alternating jitter of ±n on the three orientation fields, not a
 random one, so a not-held run reproduces rather than merely happening.
 
+A run reaches `REVIEWING`, where the verdicts live, only once **all four** poses are past —
+so each example below feeds the whole run, not just the pose it is about.
+
 ```bash
-# a clean yaw measurement: neutral, then O1 displaced by 6290 units
+# a clean run: neutral, then one pose per axis
 gp --es cmd cal --es value start
-gp --es cmd cal --es value advance
-gp --es cmd cal --es value feed --es samples "60@0,0,0;60@6290,0,0"
+gp --es cmd cal --es value feed --es samples '"60@0,0,0;60@6290,0,0;60@0,10920,0;60@0,0,10920"'
 gp --es cmd cal --es value status
 
-# noise wider than the tolerance -> NOT_HELD, and no number
-gp --es cmd cal --es value feed --es samples "60@0,0,0;60@6290,0,0~4000"
+# noise wider than the tolerance -> NOT_HELD, and no number. The failed pose stays
+# current, so it is skipped before the rest of the run is fed.
+gp --es cmd cal --es value feed --es samples '"60@0,0,0;60@6290,0,0~4000"'
+gp --es cmd cal --es value skip
+gp --es cmd cal --es value feed --es samples '"60@0,10920,0;60@0,0,10920"'
 
 # two fields responding comparably -> INCONCLUSIVE, never the larger of the two
-gp --es cmd cal --es value feed --es samples "60@0,0,0;60@5900,6290,0"
+gp --es cmd cal --es value feed --es samples '"60@0,0,0;60@5900,6290,0;60@0,10920,0;60@0,0,10920"'
 
 # a pose that moves O3 where the app expects O2 -> MISMATCHED, and no pitch scale
-gp --es cmd cal --es value feed --es samples "60@0,0,0;60@0,0,0;60@0,0,10920"
+gp --es cmd cal --es value feed --es samples '"60@0,0,0;60@6290,0,0;60@0,0,10920;60@0,0,10920"'
 ```
 
 **`feed` addresses the session directly.** That is the one place in this project where the
@@ -451,16 +476,46 @@ This command exists in the **debug build only**.
 
 ### Reading a run
 
+Mid-run, `status` reports the state and the pose, and every axis reads `pending`: verdicts do
+not exist until the run is solved, and printing a placeholder for one is the single thing this
+feature must never do.
+
 ```
 cal: state=HOLDING pose=YAW remaining=1800ms samples=44
 cal: yaw    = pending
-cal: pitch  = MEASURED 0.00412 deg/unit field=O2 delta=10920 units from PITCH
-cal: roll   = NOT_HELD "never settled: O3 moved 3140 units over the whole hold, past the 900 allowed"
+cal: pitch  = pending
+cal: roll   = pending
 ```
+
+A pose that was attempted and never settled leaves the run **awaiting that same pose**, with
+what went wrong attached:
+
+```
+cal: state=AWAITING pose=YAW index=1 hold=2000ms — the last attempt was never settled: O1 moved
+     8000 units over the whole hold, past the 900 allowed. 'cal repeat' tries it again, 'cal
+     skip' leaves the axis uncalibrated and says why
+```
+
+Once every pose is past, the verdicts print:
+
+```
+cal: state=REVIEWING — nothing is stored until 'cal finish'
+cal: yaw    = NOT_HELD "never settled: O1 moved 8000 units over the whole hold, past the 900 allowed"
+cal: pitch  = MEASURED 0.00412 deg/unit field=O2 delta=10920 units from PITCH
+cal: roll   = MEASURED 0.00412 deg/unit field=O3 delta=10920 units from ROLL
+```
+
+Skipping past a pose that *failed* still reports `NOT_HELD`, not `SKIPPED`. The two are
+different findings — "you chose not to do this" against "you did it and here is what went
+wrong" — and skipping is the only way out of a failed pose that does not retry it.
 
 `field=` appears on every verdict that identified one, **including `MISMATCHED`** — which
 field actually moved is the evidence this feature exists to produce, and it is the most
 interesting thing it prints.
+
+`INCONCLUSIVE` covers two findings and says which: named contenders mean several readings
+moved comparably, while no contenders at all means nothing moved past the plateau tolerance
+and the pose measured nothing.
 
 A verdict is always present; a number is not. `SKIPPED`, `NOT_HELD`, `INCONCLUSIVE`,
 `MISMATCHED` and `CROSS_COUPLED` carry no scale at all, and on current hardware
@@ -475,13 +530,20 @@ gp --es cmd cal --es value finish
 
 ```
 cal: finish refused — 1 suspect result(s) not confirmed. Nothing stored
-cal: yaw    = SUSPECT 2.25000 deg/unit field=O1 delta=40 units confirmed=false "90° from 40 units …"
+cal: yaw    = SUSPECT 0.09000 deg/unit field=O1 delta=1000 units confirmed=false "90° from 1000
+     units implies 0.0900°/unit, outside the plausible 0.0015..0.0500"
 cal: 'cal confirm' keeps it anyway; 'cal start' re-runs from the beginning
 ```
 
 The arithmetic is in the refusal on purpose. "This looks wrong" without the numbers is an
 opinion; with them it is something the reader can check. `confirm` takes an optional
 `--es axis YAW`; without one it confirms every suspect result waiting on a decision.
+
+**The band that produces a suspect result is narrow, and it is narrow for a reason.** A delta
+under 900 units is rejected as noise before any scale is derived, and the plausible range tops
+out at `0.05°/unit`, so for the 90° yaw pose only a delta of roughly 900–1800 units lands
+between them. Smaller deltas are `INCONCLUSIVE` with no contenders, not `SUSPECT` — an earlier
+draft of this page suggested 40 units, which produces the former and stores without asking.
 
 Only `finish` writes. Abandoning, losing the stream or walking away leaves a previously
 stored calibration byte-identical, so a failed re-run can never destroy a good one.

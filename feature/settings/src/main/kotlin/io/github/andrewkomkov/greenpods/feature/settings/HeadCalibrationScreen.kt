@@ -672,9 +672,18 @@ private fun AxisVerdict.detail(axis: HeadAxis): String =
         }
 
         is AxisVerdict.Inconclusive -> {
-            "${contenders.joinToString { it.label() }} moved by comparable amounts, so the run " +
-                "cannot say which one this movement lives in. Nothing is stored; picking the " +
-                "larger would turn a coin toss into a constant."
+            // Two different findings share this verdict, and the empty set is the one that
+            // reads as a rendering fault if it is not spelled out: nothing moved enough to
+            // be a response at all, as opposed to two readings moving comparably.
+            if (contenders.isEmpty()) {
+                "Nothing moved enough for this pose to count as a movement — every reading " +
+                    "stayed within the amount a still head is allowed to wander. Nothing is " +
+                    "stored; the pose most likely needs to be performed further."
+            } else {
+                "${contenders.joinToString { it.label() }} moved by comparable amounts, so the run " +
+                    "cannot say which one this movement lives in. Nothing is stored; picking the " +
+                    "larger would turn a coin toss into a constant."
+            }
         }
 
         is AxisVerdict.CrossCoupled -> {

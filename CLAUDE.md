@@ -198,6 +198,17 @@ Out of reach for any third-party client, and not worth attempting: Find My netwo
 automatic device switching, "Hey Siri" invocation, audio sharing. These need Apple
 account services, not protocol access.
 
-Reachable but unimplemented, in rough order of value: the AAP heart-rate frame
-format, head-tracking calibration constants (`HeadPoseMapper.SCALE` is an
-approximation), and the encrypted tail of the BLE advertisement.
+Reachable but unmeasured, in rough order of value:
+
+- **What a raw orientation unit is worth in degrees.** The calibration wizard that
+  derives it is built (`specs/004-head-tracking-calibration`) and every refusal it can
+  reach has been exercised from adb — but only against injected samples. No pose has
+  been performed by a head, so the fallback `HeadPoseMapper.UNCALIBRATED_SCALE` is
+  still what every angle rests on, and it is still an approximation that says so.
+- **Whether the three orientation values are cross-coupled at all.** The claim that
+  they are is one unrepeatable session's prose; the wizard's response matrix is what
+  would settle it. That measurement is the open task.
+- **What bytes 28 and 30 of the motion report hold** — the decoder calls them
+  accelerations, the research notes describe them as part of a four-int16 near-unit-norm
+  vector, and neither is pinned. See `docs/protocol-research.md`.
+- The encrypted tail of the BLE advertisement.

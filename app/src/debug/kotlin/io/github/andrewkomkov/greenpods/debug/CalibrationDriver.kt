@@ -218,8 +218,20 @@ internal object CalibrationDriver {
             reply("cal: skip ignored — state=${stateName(active.state)}. ${what(active.state)}")
             return
         }
+        // A pose that was attempted and failed keeps its `NOT_HELD` verdict rather than
+        // becoming `SKIPPED` — skipping is the only way out of a failed pose that does not
+        // retry it, and the solver deliberately lets the evidence outrank the absence. Saying
+        // "this will read SKIPPED" was therefore wrong exactly when it mattered most.
+        val attempted = (active.state as? CalibrationSession.State.Awaiting)?.refusal != null
         active.skip()
-        reply("cal: skipped ${poseName(pose)} — that axis will read SKIPPED and carry no number")
+        reply(
+            if (attempted) {
+                "cal: skipped past the failed ${poseName(pose)} — that axis keeps its NOT_HELD " +
+                    "verdict and carries no number"
+            } else {
+                "cal: skipped ${poseName(pose)} — that axis will read SKIPPED and carry no number"
+            },
+        )
         reply(oneLine(active))
     }
 
@@ -820,7 +832,16 @@ internal object CalibrationDriver {
             }
 
             is AxisVerdict.Inconclusive -> {
-                "INCONCLUSIVE contenders=${verdict.contenders.joinToString(",") { it.name }}"
+                // An empty contender set is not a tie, it is the absence of a response: no
+                // field moved past the plateau tolerance. Printing `contenders=` with nothing
+                // after it reads as a missing value rather than as the finding it is, which
+                // is how this was found — by walking the quickstart and seeing it.
+                if (verdict.contenders.isEmpty()) {
+                    "INCONCLUSIVE — no field moved more than the plateau tolerance, so the pose " +
+                        "moved nothing worth measuring"
+                } else {
+                    "INCONCLUSIVE contenders=${verdict.contenders.joinToString(",") { it.name }}"
+                }
             }
 
             is AxisVerdict.CrossCoupled -> {
@@ -849,8 +870,18 @@ internal object CalibrationDriver {
             }
 
             is CalibrationSession.State.Awaiting -> {
+                // The refusal is the whole reason the wizard stays on a failed pose instead of
+                // walking past it (FR-015), and leaving it out made "you have not done this
+                // pose yet" and "you did it and it never settled" print identically. Over adb
+                // that is the same failure `set` had: an outcome indistinguishable from
+                // success. Found by walking the quickstart, which is what it is for.
                 "cal: state=AWAITING pose=${poseName(state.pose)} index=${state.index} " +
-                    "hold=${state.pose.holdMillis}ms"
+                    "hold=${state.pose.holdMillis}ms" +
+                    state.refusal
+                        ?.let {
+                            " — the last attempt was $it. 'cal repeat' tries it again, 'cal skip' " +
+                                "leaves the axis uncalibrated and says why"
+                        }.orEmpty()
             }
 
             is CalibrationSession.State.Holding -> {

@@ -215,7 +215,7 @@ axis.
 - **SC-003**: *Conditional on the axes separating.* Where scales are stored, no axis reports an angle beyond what a human neck can reach.
 - **SC-003a**: Where the axes do **not** separate, the wizard says so, names the fields that responded to each pose, stores no scale, and leaves the labelled capture behind. This is a success, not a failure: it converts a claim currently resting on one unreproducible session into an artefact anyone can re-run, and it is the outcome present evidence predicts.
 - **SC-004**: When a pose is deliberately not held, the wizard reports that pose as unusable in 100% of attempts and emits no number for it.
-- **SC-005**: Every outcome the wizard can reach is reproducible from adb with injected samples alone, with no earbuds present.
+- **SC-005**: Every outcome the wizard can reach is reproducible from adb with injected samples alone, with no earbuds present. Verified 2026-08-08 on an Android 17 emulator. "No earbuds present" means none in range, not none ever paired: an injected sighting that resolves to no bond is discarded as a stranger's before it reaches the wizard, so a phone that has never paired an Apple or Beats accessory cannot run this. That filter is `BondedPodResolver` and it is deliberate — it exists because a stranger's AirPods once took the bonded key — so the constraint is recorded here rather than worked around.
 - **SC-006**: A person who reads only the final screen can tell which axes were measured, which were not, and why — without opening diagnostics.
 - **SC-007**: Re-running calibration and abandoning it midway leaves the previously stored result unchanged in 100% of attempts.
 

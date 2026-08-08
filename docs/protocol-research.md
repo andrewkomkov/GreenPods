@@ -535,11 +535,67 @@ consecutive int16 at offsets 26/28/30/32 do hold a near-constant norm (0.9695, s
 move yaw, so that is not the head's orientation either.
 
 Everything the app shows in degrees, and every gesture threshold, therefore still rests on
-a number known to be wrong. `specs/004-head-tracking-calibration` is the way out and is
-still unbuilt.
+a number known to be wrong. `specs/004-head-tracking-calibration` is the way out. It is now
+**built** — the wizard derives a scale per axis from labelled poses, or refuses and says why —
+but nothing it has produced so far came off a head. See the two sections below for what that
+does and does not settle.
 
 Deriving offsets 43/45/47 was listed as an open question; it is now closed as *the
 question was malformed* — they were packet offsets for a report whose position moves.
+
+### What bytes 28 and 30 hold is an open question, and this file is where it was found
+
+The repository contradicts itself, and neither description is pinned by a test:
+
+- `AapDecoder.kt:456-457` reads `horizontalAcceleration = le16(28)` and
+  `verticalAcceleration = le16(30)`.
+- The paragraph above describes offsets 26/28/30/32 as four consecutive int16 holding a
+  near-constant norm — a quaternion that was tested and rejected as *orientation*, but whose
+  norm was never explained away.
+
+Both cannot be right about the same four bytes. Checked against the one real capture in the
+repository (`head-tracking-varint-boundary.txt`, frame seq 126): `le16(26)=3`, `le16(28)=12`,
+`le16(30)=11`, `le16(32)=-31973`, a norm of ≈0.976 against 32768 — consistent with the 0.9695
+above, from a single frame, which is one frame short of evidence either way.
+
+The calibration wizard's `cal export` carries **all five decoded fields** per pose for exactly
+this reason: a labelled run is the cheapest evidence anyone will get about whether 28 and 30
+move with the head's rotation or with the wearer's body. Until such a run exists, the decoder's
+names for those two fields are a guess with a variable name attached, and nothing should be
+built on them.
+
+### What the calibration wizard has and has not measured
+
+**2026-08-08, no hardware.** The wizard was walked end to end from `adb` on an Android 17
+emulator (API 37, `google_apis_ps16k`, arm64) with synthetic poses injected through
+`cal feed`. Every outcome the design calls for was reproduced: a clean run yields
+`MEASURED 0.01431 °/unit field=O1 delta=6290` for yaw; a neutral of 1000 units gives
+`delta=5290` rather than 6290, so the scale is a difference and not an absolute (FR-010); a
+pose moving `O3` where the app expects `O2` yields `MISMATCHED` and stores no pitch scale;
+comparable responders yield `INCONCLUSIVE contenders=O1,O2`; a hold that never settles yields
+`NOT_HELD` with what moved and by how much; a delta of 1000 units yields `SUSPECT` and `finish`
+refuses until `confirm`; and a stored calibration is keyed by model, so an AirPods Pro 3 in
+range reads `UNCALIBRATED` while the AirPods Pro 2 record sits stored and idle.
+
+**None of that is a measurement of an accessory.** Every sample was injected. It establishes
+that the instrument works and that its refusals are reachable — nothing about what a raw
+orientation unit is worth in degrees, and nothing about whether the cross-coupling above
+reproduces.
+
+**Still unmeasured**, and the reason this section is short:
+
+- The response matrix off a real head. Whether each pose moves one field or three is the
+  question the wizard was built to answer, and it needs AirPods Pro 3, an open AAP channel and
+  a neck.
+- Whether `HeadPoseMapper.UNCALIBRATED_SCALE` (0.0054933317 °/unit) is anywhere near right.
+- Whether bytes 28 and 30 track rotation or translation — see above.
+- Whether the gesture thresholds still fire once a calibration is stored (FR-024). They are
+  expressed in degrees, so calibration changes what they mean physically. That is intended, and
+  it is also the change most likely to be experienced as "head gestures stopped working".
+
+Until a run off hardware is recorded here, `specs/004-head-tracking-calibration` tasks T060 to
+T062 stay open, and no number this feature has produced should be quoted as a property of any
+accessory.
 
 ## Settings that persist in the accessory
 
