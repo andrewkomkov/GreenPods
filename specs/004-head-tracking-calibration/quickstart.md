@@ -193,7 +193,9 @@ must read `UNCALIBRATED`.
 
 ## 7. On a head (User Story 1's Independent Test, SC-002, SC-003)
 
-`scripts/calibration-hardware-run.sh` is this whole section as one command — it probes the
+`scripts/hardware-walk.sh` is this whole section as one command, and then the other two
+hardware-blocked walks left in `specs/` — 003's quickstart sections 4 to 7, and 005's live
+surface — so one session with the accessory closes all of them. For this section it probes the
 transport, walks the four poses with a prompt each, prints the verdicts, stores, exports, emits
 the fixture, and ends on the gesture check T061 asks for. Run it with `--out run.txt` to keep
 the transcript. The steps below are what it does, for anyone who would rather drive it by hand.

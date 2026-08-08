@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 #
-# Section 7 of specs/004-head-tracking-calibration/quickstart.md, as one command.
+# Every hardware-blocked task left in specs/, as one command.
 #
-# This is the run that closes T060, and with it T061 and T062. It needs what nothing else in
-# this repository needs: AirPods Pro 3 in the ears, an open AAP channel, and a person willing
-# to hold four poses. Everything the wizard can be asked without those has already been walked
-# and is recorded in that quickstart — this script exists so the part that cannot be automated
-# is the *only* part left to do.
+# Five tasks across three features need what nothing else in this repository needs: AirPods
+# Pro 3 in the ears, an open AAP channel, and a person willing to hold four poses.
 #
-#   ./scripts/calibration-hardware-run.sh                 # guided run, prompts per pose
-#   ./scripts/calibration-hardware-run.sh --out run.txt   # and keep the transcript
+#   004 T060, T061, T062  calibration on a real head, the gesture thresholds after it, the write-up
+#   003 T070a             heart rate quickstart sections 4 to 7, never walked
+#   005 T038              the live-surface walk, whose record does not exist
+#
+# Everything those features can be asked without hardware has been walked and recorded. This
+# script exists so the part that cannot be automated is the *only* part left to do.
+#
+#   ./scripts/hardware-walk.sh                 # guided run, prompts per pose
+#   ./scripts/hardware-walk.sh --out run.txt   # and keep the transcript
 #
 # What comes out is a transcript, a `cal export` JSON, and a labelled fixture. Paste the export
 # and the response matrix into docs/protocol-research.md — the section "What the calibration
@@ -116,8 +120,62 @@ main() {
   read -r -p "Try a nod and a shake, then press Enter. " _
   step --es cmd dump
 
-  say "Done. Next: paste the export and the response matrix into docs/protocol-research.md,"
+  say "Done with 004. Paste the export and the response matrix into docs/protocol-research.md,"
   say "and tick T060 to T062 in specs/004-head-tracking-calibration/tasks.md."
+
+  hr_sections_4_to_7
+  live_activity_walk
+
+  say "Every hardware-blocked task in specs/ has now been driven once:"
+  say "  004 T060, T061, T062   — the calibration run above"
+  say "  003 T070a              — heart rate quickstart sections 4 to 7"
+  say "  005 T038               — the live-surface walk"
+  say "Tick each only where its output actually says what its task claims."
+}
+
+# 003 T070a: quickstart sections 4 to 7. Never walked — the hardware went away in 2026-08-04's
+# session after the defects found in section 3 had consumed it.
+hr_sections_4_to_7() {
+  say "003 §4 — heart rate stops when it should"
+  step --es cmd hr --es value on
+  read -r -p "Take one bud out, then press Enter. " _
+  step --es cmd hr --es value status      # expect UNAVAILABLE, lastStop=notWorn
+  read -r -p "Put it back in, then press Enter. " _
+  sleep 20
+  step --es cmd hr --es value status      # expect STARTING, then SETTLING, then MEASURING
+
+  say "003 §5 — the health store"
+  step --es cmd health --es value status
+  step --es cmd set --es key hrHealthConnect --es value on
+  step --es cmd hr --es value on
+  step --es cmd hr --es value status
+  step --es cmd health --es value count --el minutes 10
+
+  say "003 §6 — nothing leaks. No command may print a heart rate."
+  step --es cmd dump
+  echo "Check by eye: the dump above carries heartRate state and counters, and no BPM."
+
+  say "003 §7 — locked, not hidden"
+  step --es cmd probe
+  step --es cmd hr --es value status
+  step --es cmd inject --es model 0x1420 --es address DE:B0:60:00:00:01
+  step --es cmd hr --es value status      # expect UNSUPPORTED on a model with no sensor
+}
+
+# 005 T038: the walk itself may well have happened; the record it asks for does not exist.
+# Running it again is cheaper than arguing about what was done in August.
+live_activity_walk() {
+  say "005 — the live surface, walked for the record"
+  step --es cmd live
+  step --es cmd monitor --es value on
+  echo "Lock the screen and look at it."
+  read -r -p "Press Enter when you have. " _
+  step --es cmd live --es action cycle
+  step --es cmd live --es action stop
+  step --es cmd live --es action dismiss
+  step --es cmd monitor --es value off
+  say "Write which of these steps you actually ran into 005's quickstart, the way"
+  say "004's \"What was actually run\" section does. That record is T038's deliverable."
 }
 
 if [ -n "$OUT" ]; then
