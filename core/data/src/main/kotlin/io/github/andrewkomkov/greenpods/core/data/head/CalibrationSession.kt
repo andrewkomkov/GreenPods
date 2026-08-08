@@ -6,6 +6,7 @@ import io.github.andrewkomkov.greenpods.core.bluetooth.head.PlateauDetector
 import io.github.andrewkomkov.greenpods.core.model.AxisCalibration
 import io.github.andrewkomkov.greenpods.core.model.AxisVerdict
 import io.github.andrewkomkov.greenpods.core.model.CalibrationPose
+import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.HeadAxis
 import io.github.andrewkomkov.greenpods.core.model.HeadCalibration
 import io.github.andrewkomkov.greenpods.core.model.HeadTrackingSample
@@ -29,6 +30,38 @@ class CalibrationSession(
     private val solver: CalibrationSolver = CalibrationSolver(),
     private val poses: List<CalibrationPose> = CalibrationPose.Sequence,
 ) {
+    companion object {
+        /**
+         * A session configured from settings.
+         *
+         * The tolerance and the hold duration are provisional numbers this feature shipped
+         * with (research R-6), and both are settings so that replacing them stays a
+         * measurement rather than a rebuild. Built in one place because they have to agree in
+         * three: the plateau's window, the solver's minimum response — which *is* the
+         * tolerance, since a move smaller than a still head's wander is not a move — and the
+         * countdown the wearer is asked to hold.
+         */
+        fun from(
+            model: PodModel,
+            settings: GreenPodsSettings,
+        ): CalibrationSession =
+            CalibrationSession(
+                model = model,
+                detector =
+                    PlateauDetector(
+                        PlateauDetector.Config(
+                            toleranceUnits = settings.calibrationToleranceUnits,
+                            minimumHoldMillis = settings.calibrationHoldMillis,
+                        ),
+                    ),
+                solver =
+                    CalibrationSolver(
+                        CalibrationSolver.Config(minimumDeltaUnits = settings.calibrationToleranceUnits),
+                    ),
+                poses = CalibrationPose.sequenceHolding(settings.calibrationHoldMillis),
+            )
+    }
+
     /** Where the run is. Exhaustive: there is no state not named here. */
     sealed interface State {
         /** Nothing running. A previously stored calibration may exist and is untouched. */

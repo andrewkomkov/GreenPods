@@ -92,6 +92,7 @@ object GreenPodsViewModels {
                     samples = { controller.stream() },
                     models = app.podRepository.primaryPod.map { it?.model },
                     calibrations = app.headCalibrationStore,
+                    settings = app.settingsRepository.settings,
                 )
             }
         }

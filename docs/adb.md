@@ -295,7 +295,7 @@ gp --es cmd set --es key lowBatteryThreshold --es value 30
 Keys: `autoPause`, `autoResume`, `pauseOnlyWhenBothOut`, `backgroundMonitoring`,
 `lowBatteryWarning`, `lowBatteryThreshold`, `headGestures`, `scanMode`,
 `hrIntervalMs`, `hrConfidenceThreshold`, `hrHealthConnect`, `liveActivityEnabled`,
-`liveActivityShowHeartRate`.
+`liveActivityShowHeartRate`, `calibrationToleranceUnits`, `calibrationHoldMillis`.
 
 ## Heart rate
 
@@ -385,6 +385,29 @@ there is nothing to key it to otherwise:
 gp --es cmd inject --es model 0x1420 --ei left 70 --ei right 70
 gp --es cmd cal --es value start
 ```
+
+`start` prints the two numbers the run will be judged against, because both are provisional
+(research R-6) and a result quoted without them cannot be compared with the next one:
+
+```
+cal: tolerance=900 units hold=2000ms — both provisional, both settable: 'set --es key calibrationToleranceUnits'
+```
+
+`900` came from a session captured through a decoder bug that has since been fixed, so it is a
+starting point rather than a measurement. Replacing it is a measurement someone with earbuds
+can run, and it must not need a build:
+
+```bash
+gp --es cmd set --es key calibrationToleranceUnits --es value 1500
+gp --es cmd set --es key calibrationHoldMillis --es value 3000
+gp --es cmd cal --es value start      # the new values take effect on the next run
+```
+
+The tolerance is one number in three places on purpose: how far a pose may wander and still
+count as held, how small a response may be and still count as a response — a move smaller than
+a *still* head's wander is not a move — and, with the hold, the countdown the wearer is asked
+to keep. Raising it loosens all three together. Both are clamped (50–5 000 units,
+500–10 000 ms) and both appear in `dump` under `settings`.
 
 **`inject` needs this phone to be paired to an Apple or Beats audio accessory**, even though
 nothing has to be in range. An advertisement that resolves to no bond is somebody else's and

@@ -220,6 +220,8 @@ object StateDump {
             "heartRateHealthConnectEnabled" to settings.heartRateHealthConnectEnabled.toString(),
             "heartRateIntervalMillis" to settings.heartRateIntervalMillis.toString(),
             "heartRateConfidenceThreshold" to settings.heartRateConfidenceThreshold.toString(),
+            "calibrationToleranceUnits" to settings.calibrationToleranceUnits.toString(),
+            "calibrationHoldMillis" to settings.calibrationHoldMillis.toString(),
             "gestureBindings" to
                 array(
                     settings.gestureBindings.map { binding ->

@@ -2,6 +2,7 @@ package io.github.andrewkomkov.greenpods.core.data.head
 
 import io.github.andrewkomkov.greenpods.core.model.AxisVerdict
 import io.github.andrewkomkov.greenpods.core.model.CalibrationPose
+import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.HeadAxis
 import io.github.andrewkomkov.greenpods.core.model.HeadCalibration
 import io.github.andrewkomkov.greenpods.core.model.HeadTrackingSample
@@ -44,6 +45,66 @@ class CalibrationSessionTest {
     private val measuredAt = 1_700_000_000_000L
 
     private fun session(): CalibrationSession = CalibrationSession(model = PodModel.AIRPODS_PRO_3)
+
+    /**
+     * The provisional numbers are settings, and a session built from them uses them (T018).
+     *
+     * Both directions are asserted because only the pair proves the wiring: a tolerance that
+     * accepts a wobble the default rejects, and one that rejects a wobble the default accepts.
+     * Checking one alone would pass against a session that ignored the setting entirely.
+     */
+    @Test
+    fun `the plateau tolerance comes from settings`() {
+        val wobble = 1_500
+
+        val strict =
+            CalibrationSession.from(
+                PodModel.AIRPODS_PRO_3,
+                GreenPodsSettings.Default.copy(calibrationToleranceUnits = 900),
+            )
+        strict.start()
+        strict.holdWobbling(by = wobble)
+        strict
+            .state
+            .shouldBeInstanceOf<CalibrationSession.State.Awaiting>()
+            .refusal
+            .shouldNotBeNull()
+
+        val loose =
+            CalibrationSession.from(
+                PodModel.AIRPODS_PRO_3,
+                GreenPodsSettings.Default.copy(calibrationToleranceUnits = 4_000),
+            )
+        loose.start()
+        loose.holdWobbling(by = wobble)
+        loose.state
+            .shouldBeInstanceOf<CalibrationSession.State.Awaiting>()
+            .refusal
+            .shouldBeNull()
+    }
+
+    /**
+     * The hold duration comes from settings, and reaches the poses as well as the detector.
+     *
+     * The countdown the wearer is shown and the window the plateau is looked for in have to be
+     * the same number — a longer hold asked for and judged against a shorter one would pass
+     * for the wrong reason.
+     */
+    @Test
+    fun `the hold duration comes from settings`() {
+        val session =
+            CalibrationSession.from(
+                PodModel.AIRPODS_PRO_3,
+                GreenPodsSettings.Default.copy(calibrationHoldMillis = 5_000L),
+            )
+        session.start()
+        session.awaitingPose().holdMillis shouldBe 5_000L
+
+        // Two seconds of perfectly still samples used to be a complete hold. Against a
+        // five-second setting it is not one, and the run must still be waiting.
+        session.holdStill()
+        session.state.shouldBeInstanceOf<CalibrationSession.State.Holding>()
+    }
 
     @Test
     fun `a clean run measures a scale for every axis`() {
@@ -495,6 +556,21 @@ class CalibrationSessionTest {
         for (index in 0..SAMPLES_PER_HOLD) {
             nowMillis = start + index * SAMPLE_INTERVAL_MILLIS
             onSample(sample(o1, o2, o3), nowMillis)
+        }
+        nowMillis += GAP_BETWEEN_POSES_MILLIS
+    }
+
+    /**
+     * A hold that alternates by [by] units, so whether it settles depends only on the tolerance.
+     *
+     * Synthetic, like everything else here: a real head wanders, it does not square-wave.
+     */
+    private fun CalibrationSession.holdWobbling(by: Int) {
+        val start = nowMillis
+        beginHold()
+        for (index in 0..SAMPLES_PER_HOLD) {
+            nowMillis = start + index * SAMPLE_INTERVAL_MILLIS
+            onSample(sample(o1 = if (index % 2 == 0) 0 else by), nowMillis)
         }
         nowMillis += GAP_BETWEEN_POSES_MILLIS
     }

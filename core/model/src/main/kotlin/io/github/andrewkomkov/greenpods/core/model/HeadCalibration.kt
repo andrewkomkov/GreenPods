@@ -91,6 +91,17 @@ data class CalibrationPose(
          */
         val Sequence: List<CalibrationPose> =
             listOf(CalibrationPose(axis = null)) + HeadAxis.entries.map { CalibrationPose(it) }
+
+        /**
+         * The same sequence at a chosen hold duration.
+         *
+         * [DEFAULT_HOLD_MILLIS] is provisional, so the wizard reads it from settings rather
+         * than from here — and the countdown the wearer sees, the window the plateau is
+         * looked for in, and the number an injected `cal feed` spreads its samples across all
+         * have to be the *same* number, or a longer hold would be asked for and judged against
+         * a shorter one.
+         */
+        fun sequenceHolding(holdMillis: Long): List<CalibrationPose> = Sequence.map { it.copy(holdMillis = holdMillis) }
     }
 }
 

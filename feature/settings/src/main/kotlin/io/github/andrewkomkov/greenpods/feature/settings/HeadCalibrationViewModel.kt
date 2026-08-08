@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import io.github.andrewkomkov.greenpods.core.data.head.CalibrationSession
 import io.github.andrewkomkov.greenpods.core.data.head.HeadCalibrationStore
 import io.github.andrewkomkov.greenpods.core.data.head.HeadTrackingController
+import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.HeadAxis
 import io.github.andrewkomkov.greenpods.core.model.HeadCalibration
 import io.github.andrewkomkov.greenpods.core.model.PodModel
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -70,14 +72,26 @@ class HeadCalibrationViewModel(
     models: Flow<PodModel?>,
     private val calibrations: HeadCalibrationStore,
     private val clock: () -> Long = System::currentTimeMillis,
-    private val newSession: (PodModel) -> CalibrationSession = { CalibrationSession(it) },
+    settings: Flow<GreenPodsSettings> = flowOf(GreenPodsSettings.Default),
+    private val newSession: (PodModel, GreenPodsSettings) -> CalibrationSession = CalibrationSession::from,
 ) : ViewModel() {
+    /**
+     * The settings a session is built from, kept as a plain value.
+     *
+     * The plateau tolerance and the hold duration are provisional (research R-6) and settable,
+     * and a session is configured once when it is created — so what matters is the value in
+     * hand at that moment, not a stream. Changing either mid-run would judge the second half
+     * of a run by different numbers from the first, which is worse than needing to start
+     * again.
+     */
+    private var settingsNow: GreenPodsSettings = GreenPodsSettings.Default
     private val _state = MutableStateFlow(HeadCalibrationUiState())
     val state: StateFlow<HeadCalibrationUiState> = _state.asStateFlow()
 
     private var session: CalibrationSession? = null
 
     init {
+        viewModelScope.launch { settings.collect { settingsNow = it } }
         viewModelScope.launch { models.collect(::onModel) }
 
         viewModelScope.launch {
@@ -123,7 +137,7 @@ class HeadCalibrationViewModel(
         val lostRun = previous != null && session?.state != CalibrationSession.State.Idle
 
         session?.abandon()
-        session = model?.let(newSession)
+        session = model?.let { newSession(it, settingsNow) }
         val stored = model?.let { calibrations.load(it) }
         _state.update { it.copy(model = model, stored = stored, abandonedOnSwap = lostRun) }
         publish()

@@ -207,7 +207,7 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                 app.applicationScope.launch {
                     val pod = app.awaitPods(DEFAULT_WAIT_MILLIS).firstOrNull()
                     when (value) {
-                        "start" -> CalibrationDriver.start(app, pod, out)
+                        "start" -> CalibrationDriver.start(app, pod, app.settingsRepository.settings.first(), out)
                         "show" -> CalibrationDriver.show(app, pod, out)
                         "export" -> CalibrationDriver.export(app, pod, out)
                         "clear" -> CalibrationDriver.clear(app, pod, out)
@@ -750,6 +750,25 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                         current.copy(heartRateHealthConnectEnabled = on)
                     }
 
+                    // Both ship provisional (research R-6): 900 came from a session captured
+                    // through a decoder bug that has since been fixed. Settable for the same
+                    // reason hrConfidenceThreshold is — deriving better ones has to be
+                    // something a person with earbuds can run, not something that needs a
+                    // build. They take effect on the next 'cal start'.
+                    "calibrationToleranceUnits" -> {
+                        current.copy(
+                            calibrationToleranceUnits =
+                                value.toIntOrNull() ?: current.calibrationToleranceUnits,
+                        )
+                    }
+
+                    "calibrationHoldMillis" -> {
+                        current.copy(
+                            calibrationHoldMillis =
+                                value.toLongOrNull() ?: current.calibrationHoldMillis,
+                        )
+                    }
+
                     "scanMode" -> {
                         current.copy(
                             scanMode =
@@ -915,6 +934,8 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                 "hrHealthConnect",
                 "liveActivityEnabled",
                 "liveActivityShowHeartRate",
+                "calibrationToleranceUnits",
+                "calibrationHoldMillis",
             )
 
         /**

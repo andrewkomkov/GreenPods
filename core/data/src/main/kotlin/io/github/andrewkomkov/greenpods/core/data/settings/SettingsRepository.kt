@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
@@ -61,6 +62,8 @@ class SettingsRepository(
             preferences[Keys.HEART_RATE_CONFIDENCE] = updated.heartRateConfidenceThreshold
             preferences[Keys.LIVE_ACTIVITY] = updated.liveActivityEnabled
             preferences[Keys.LIVE_ACTIVITY_SHOW_HEART_RATE] = updated.liveActivityShowHeartRate
+            preferences[Keys.CALIBRATION_TOLERANCE_UNITS] = updated.calibrationToleranceUnits
+            preferences[Keys.CALIBRATION_HOLD_MILLIS] = updated.calibrationHoldMillis
         }
     }
 
@@ -106,6 +109,12 @@ class SettingsRepository(
             liveActivityShowHeartRate =
                 preferences[Keys.LIVE_ACTIVITY_SHOW_HEART_RATE]
                     ?: defaults.liveActivityShowHeartRate,
+            calibrationToleranceUnits =
+                preferences[Keys.CALIBRATION_TOLERANCE_UNITS]
+                    ?: defaults.calibrationToleranceUnits,
+            calibrationHoldMillis =
+                preferences[Keys.CALIBRATION_HOLD_MILLIS]
+                    ?: defaults.calibrationHoldMillis,
         ).sanitised()
     }
 
@@ -139,6 +148,14 @@ class SettingsRepository(
          * display a reading is not declining to measure one.
          */
         val LIVE_ACTIVITY_SHOW_HEART_RATE = booleanPreferencesKey("live_activity_show_heart_rate")
+
+        /**
+         * Both persisted for the same reason [HEART_RATE_CONFIDENCE] is: the plateau tolerance
+         * and the hold duration are provisional numbers, and finding better ones has to be a
+         * measurement someone can run rather than a rebuild.
+         */
+        val CALIBRATION_TOLERANCE_UNITS = intPreferencesKey("calibration_tolerance_units")
+        val CALIBRATION_HOLD_MILLIS = longPreferencesKey("calibration_hold_millis")
     }
 
     companion object {

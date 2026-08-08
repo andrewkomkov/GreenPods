@@ -193,6 +193,11 @@ must read `UNCALIBRATED`.
 
 ## 7. On a head (User Story 1's Independent Test, SC-002, SC-003)
 
+`scripts/calibration-hardware-run.sh` is this whole section as one command — it probes the
+transport, walks the four poses with a prompt each, prints the verdicts, stores, exports, emits
+the fixture, and ends on the gesture check T061 asks for. Run it with `--out run.txt` to keep
+the transcript. The steps below are what it does, for anyone who would rather drive it by hand.
+
 Only now, and only with AirPods Pro 3 in the ears and the AAP channel live:
 
 ```bash

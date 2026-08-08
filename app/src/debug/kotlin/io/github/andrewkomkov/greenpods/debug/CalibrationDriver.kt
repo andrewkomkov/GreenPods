@@ -9,6 +9,7 @@ import io.github.andrewkomkov.greenpods.core.data.head.HeadTrackingController
 import io.github.andrewkomkov.greenpods.core.model.AxisCalibration
 import io.github.andrewkomkov.greenpods.core.model.AxisVerdict
 import io.github.andrewkomkov.greenpods.core.model.CalibrationPose
+import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.HeadAxis
 import io.github.andrewkomkov.greenpods.core.model.HeadCalibration
 import io.github.andrewkomkov.greenpods.core.model.HeadTrackingSample
@@ -93,6 +94,7 @@ internal object CalibrationDriver {
     fun start(
         app: GreenPodsApplication,
         pod: PodState?,
+        settings: GreenPodsSettings,
         reply: (String) -> Unit,
     ) {
         if (pod == null) {
@@ -105,7 +107,7 @@ internal object CalibrationDriver {
 
         stopStream()
         recorded.clear()
-        val fresh = CalibrationSession(pod.model)
+        val fresh = CalibrationSession.from(pod.model, settings)
         fresh.start()
         session = fresh
         address = pod.address
@@ -113,6 +115,12 @@ internal object CalibrationDriver {
         reply(
             "cal: started — model=${pod.model.name} address=${pod.address} " +
                 "poses=${CalibrationPose.Sequence.size} (neutral first, then one per axis)",
+        )
+        // Both are provisional (research R-6), so a run says which numbers it was judged
+        // against. A result quoted without them cannot be compared with the next one.
+        reply(
+            "cal: tolerance=${settings.calibrationToleranceUnits} units hold=${settings.calibrationHoldMillis}ms " +
+                "— both provisional, both settable: 'set --es key calibrationToleranceUnits'",
         )
         reply("cal: nothing is stored until 'cal finish'; 'cal abandon' leaves any stored calibration untouched")
         reply("cal: next 'cal advance' begins the ${poseName(CalibrationPose.Sequence.first())} hold")
