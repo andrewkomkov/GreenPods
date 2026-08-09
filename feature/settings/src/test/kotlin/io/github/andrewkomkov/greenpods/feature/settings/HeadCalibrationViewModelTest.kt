@@ -118,7 +118,7 @@ class HeadCalibrationViewModelTest {
             subject.beginHold()
             subject.state.value.step
                 .shouldBeInstanceOf<CalibrationSession.State.Holding>()
-                .remainingMillis shouldBe CalibrationPose.DEFAULT_HOLD_MILLIS
+                .remainingMillis shouldBe POSE_HOLD_MILLIS
 
             // Two samples in, and the countdown has moved because the data has — not because
             // a timer ran. A bar that advanced without samples would be claiming a
@@ -131,7 +131,7 @@ class HeadCalibrationViewModelTest {
             holding.samplesCollected shouldBe 2
             // One step, not two: the first sample lands at the moment the hold began, so it
             // is the interval *between* the samples that has elapsed.
-            holding.remainingMillis shouldBe CalibrationPose.DEFAULT_HOLD_MILLIS - STEP_MILLIS
+            holding.remainingMillis shouldBe POSE_HOLD_MILLIS - STEP_MILLIS
         }
 
     @Test
@@ -347,12 +347,20 @@ class HeadCalibrationViewModelTest {
         const val STEP_MILLIS = 100L
 
         /**
-         * One more than the hold divided by the step.
+         * The countdown a pose actually shows: the plateau the detector needs, plus the settle
+         * margin the wearer is given.
          *
-         * The last sample is the one that lands on zero remaining and triggers the analysis,
-         * and the plateau detector needs the window it closes to span its full minimum hold.
+         * The two were the same number until hardware refused a perfectly still pose for being
+         * seven milliseconds short of its own window.
          */
-        const val SAMPLES_PER_HOLD = (CalibrationPose.DEFAULT_HOLD_MILLIS / STEP_MILLIS).toInt() + 1
+        val POSE_HOLD_MILLIS = CalibrationPose.DEFAULT_HOLD_MILLIS + CalibrationSession.SETTLE_MARGIN_MILLIS
+
+        /**
+         * One more than the countdown divided by the step.
+         *
+         * The last sample is the one that lands on zero remaining and triggers the analysis.
+         */
+        val SAMPLES_PER_HOLD = (POSE_HOLD_MILLIS / STEP_MILLIS).toInt() + 1
 
         /** 90° of yaw and 45° each of pitch and roll, at a plausible scale. */
         const val YAW_UNITS = 6_290

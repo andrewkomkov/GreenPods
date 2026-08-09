@@ -582,11 +582,62 @@ that the instrument works and that its refusals are reachable — nothing about 
 orientation unit is worth in degrees, and nothing about whether the cross-coupling above
 reproduces.
 
+### What a still head actually does — measured 2026-08-09
+
+**Pixel 8 (shiba), Android 17, AirPods Pro 3, both buds in, AAP channel open.** The first
+labelled orientation capture this repository has held. A wearer sitting still and looking
+straight ahead, one two-second hold, 41 samples at **≈21 Hz**:
+
+| field | min | max | span | median |
+|---|---|---|---|---|
+| `o1` | −25562 | −24832 | **730** | −24942 |
+| `o2` | −15054 | −13483 | **1571** | −14871 |
+| `o3` | 11756 | 13427 | **1671** | 11852 |
+| `horizontalAcceleration` | −195 | 22 | 217 | −1 |
+| `verticalAcceleration` | −73 | 384 | 457 | 13 |
+
+Two things fall out of it immediately, and both were invisible without hardware.
+
+**The values are nowhere near zero and they drift continuously.** A "neutral" head reads
+about (−24900, −14900, 11850), not (0, 0, 0) — which is what FR-010 anticipated by deriving
+every scale as a difference against the neutral hold rather than from an absolute.
+
+**The plateau tolerance of 900 units sat below the drift of a stationary head.** `o2` and `o3`
+both exceeded it while the wearer was doing nothing, so every pose was refused as never
+settled. That number was never a measurement — it came from this feature's requirements
+checklist, recording plateaus in a session captured through a decoder bug since fixed, and the
+code said so and asked to be corrected by measurement. This is that correction: the default is
+now **2500**, which clears the largest span with about half again as much room. One wearer,
+one accessory, one sitting — better than 900 and still not a law, which is why it stays a
+setting (`gp --es cmd set --es key calibrationToleranceUnits`).
+
+### The countdown and the plateau were the same number, so no pose could pass
+
+Found in the same session, and it is a design defect rather than a constant needing tuning.
+`CalibrationPose.holdMillis` and `PlateauDetector.minimumHoldMillis` were both 2000 ms, so the
+plateau had to span the **entire** collected window. It never can: samples arrive about every
+48 ms, so the first lands after the countdown starts and the window is always a little short.
+
+A yaw pose held perfectly still was refused for being *held for only 1993ms, less than the
+2000ms required*. Seven milliseconds.
+
+`CalibrationSession.analyse` states the opposite intent in its own comment — "the plateau is
+found *inside* the collected window rather than assumed to be all of it — the wearer is not
+obliged to obey the countdown exactly" — and the wiring defeated it. The countdown now carries
+a one-second settle margin over the plateau it must contain.
+
+**Injected samples could never have found this.** `cal feed` spreads its samples exactly across
+the hold, so the synthetic window always spanned the whole countdown. It is the one failure
+mode the no-hardware path is structurally blind to, which is worth remembering the next time a
+green adb walk is mistaken for a verified feature.
+
 **Still unmeasured**, and the reason this section is short:
 
 - The response matrix off a real head. Whether each pose moves one field or three is the
-  question the wizard was built to answer, and it needs AirPods Pro 3, an open AAP channel and
-  a neck.
+  question the wizard was built to answer. The 2026-08-09 session reached the neutral hold and
+  then spent itself on the two defects above; no yaw, pitch or roll pose was ever completed, so
+  the cross-coupling claim is still exactly as unpinned as it was. What that session bought was
+  a wizard that can now take the measurement, which it demonstrably could not before.
 - Whether `HeadPoseMapper.UNCALIBRATED_SCALE` (0.0054933317 °/unit) is anywhere near right.
 - Whether bytes 28 and 30 track rotation or translation — see above.
 - Whether the gesture thresholds still fire once a calibration is stored (FR-024). They are

@@ -58,8 +58,31 @@ class CalibrationSession(
                     CalibrationSolver(
                         CalibrationSolver.Config(minimumDeltaUnits = settings.calibrationToleranceUnits),
                     ),
-                poses = CalibrationPose.sequenceHolding(settings.calibrationHoldMillis),
+                // The countdown is longer than the plateau it must contain, and that gap is the
+                // whole point. `analyse` says the plateau is found *inside* the collected
+                // window rather than assumed to be all of it — but while the two numbers were
+                // equal, the plateau had to span the entire window, and it never can: samples
+                // arrive at about 21 Hz, so the first lands ~50 ms after the countdown starts
+                // and the window is always a little short of it.
+                //
+                // Measured on hardware 2026-08-09: a yaw pose held perfectly still was refused
+                // for being "held for only 1993ms, less than the 2000ms required". Seven
+                // milliseconds. Injected samples never showed it because `cal feed` spreads
+                // them exactly across the hold, so the synthetic window always spanned the
+                // whole countdown — the one failure mode the no-hardware path cannot reach.
+                poses = CalibrationPose.sequenceHolding(settings.calibrationHoldMillis + SETTLE_MARGIN_MILLIS),
             )
+
+        /**
+         * How much longer the wearer is asked to hold than the plateau actually needs.
+         *
+         * Covers the sample interval at either end and the moment it takes somebody to stop
+         * moving after they reach the pose. A second is generous against a ~50 ms sample
+         * interval, and generous is right: the cost of too much is a slightly longer wizard,
+         * the cost of too little is a refusal the wearer cannot act on, because holding
+         * *harder* is not a thing anybody can do.
+         */
+        const val SETTLE_MARGIN_MILLIS = 1_000L
     }
 
     /** Where the run is. Exhaustive: there is no state not named here. */

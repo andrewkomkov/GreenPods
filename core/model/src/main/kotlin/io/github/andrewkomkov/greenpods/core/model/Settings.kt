@@ -141,8 +141,31 @@ data class GreenPodsSettings(
 
         const val DEFAULT_HR_CONFIDENCE_THRESHOLD = 128
 
-        /** See [calibrationToleranceUnits] — provisional, from the motivating session. */
-        const val DEFAULT_CALIBRATION_TOLERANCE_UNITS = 900
+        /**
+         * How far a still head wanders, with room to spare. **Measured**, 2026-08-09.
+         *
+         * It was 900 until then, and 900 was never a measurement: it came from this feature's
+         * requirements checklist, recording plateaus found in a session captured through a
+         * decoder bug that has since been fixed. The code said as much and asked to be
+         * corrected by measurement rather than by taste.
+         *
+         * Here is the measurement. AirPods Pro 3 on a Pixel 8, both buds in, a wearer sitting
+         * still and looking straight ahead for two seconds — 41 samples at ~21 Hz:
+         *
+         * | field | span over the hold |
+         * |-------|--------------------|
+         * | `o1`  | 730                |
+         * | `o2`  | 1571               |
+         * | `o3`  | 1671               |
+         *
+         * So 900 sat *below the drift of a stationary head* and refused every pose on the
+         * hardware this feature exists for. 2500 clears the largest span with about half again
+         * as much room, which is the margin a single session's worth of evidence supports —
+         * one wearer, one accessory, one sitting. It is a better number than 900 and it is
+         * still not a law; the raw capture is in `docs/protocol-research.md` for anyone who
+         * disagrees, and this stays a setting.
+         */
+        const val DEFAULT_CALIBRATION_TOLERANCE_UNITS = 2_500
 
         /**
          * Rails, not policy. Below 50 units nothing a real sensor produces would ever settle;

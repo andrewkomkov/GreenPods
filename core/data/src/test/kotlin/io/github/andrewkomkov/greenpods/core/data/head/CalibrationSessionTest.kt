@@ -98,11 +98,23 @@ class CalibrationSessionTest {
                 GreenPodsSettings.Default.copy(calibrationHoldMillis = 5_000L),
             )
         session.start()
-        session.awaitingPose().holdMillis shouldBe 5_000L
+
+        // The countdown is the plateau plus the settle margin, and the gap between them is
+        // load-bearing: with the two equal, the plateau had to span the whole window and a
+        // pose held perfectly still was refused on hardware for being seven milliseconds
+        // short.
+        session.awaitingPose().holdMillis shouldBe 5_000L + CalibrationSession.SETTLE_MARGIN_MILLIS
 
         // Two seconds of perfectly still samples used to be a complete hold. Against a
-        // five-second setting it is not one, and the run must still be waiting.
-        session.holdStill()
+        // five-second setting it is not one, and the run must still be waiting. Fed at a fixed
+        // length on purpose — the other helpers derive theirs from the pose, which is exactly
+        // what this test must not do if it is to prove the setting reached the pose.
+        val start = nowMillis
+        session.advance(nowMillis)
+        for (index in 0..(2_000L / SAMPLE_INTERVAL_MILLIS).toInt()) {
+            nowMillis = start + index * SAMPLE_INTERVAL_MILLIS
+            session.onSample(sample(), nowMillis)
+        }
         session.state.shouldBeInstanceOf<CalibrationSession.State.Holding>()
     }
 
@@ -545,6 +557,20 @@ class CalibrationSessionTest {
         advance(nowMillis)
     }
 
+    /**
+     * How many samples cover the countdown of the pose now being shown.
+     *
+     * Derived rather than fixed, because the countdown is the required plateau *plus* a settle
+     * margin now. A hard-coded fifty stopped a second short of it and the hold never completed
+     * — which is the same shape as the hardware defect that put the margin there.
+     */
+    private fun CalibrationSession.samplesForHold(): Int {
+        val hold =
+            (state as? CalibrationSession.State.Awaiting)?.pose?.holdMillis
+                ?: CalibrationPose.DEFAULT_HOLD_MILLIS
+        return (hold / SAMPLE_INTERVAL_MILLIS).toInt()
+    }
+
     /** A pose held perfectly still for the whole countdown — a thing only a test can do. */
     private fun CalibrationSession.holdStill(
         o1: Int = 0,
@@ -552,8 +578,9 @@ class CalibrationSessionTest {
         o3: Int = 0,
     ) {
         val start = nowMillis
+        val samples = samplesForHold()
         beginHold()
-        for (index in 0..SAMPLES_PER_HOLD) {
+        for (index in 0..samples) {
             nowMillis = start + index * SAMPLE_INTERVAL_MILLIS
             onSample(sample(o1, o2, o3), nowMillis)
         }
@@ -567,8 +594,9 @@ class CalibrationSessionTest {
      */
     private fun CalibrationSession.holdWobbling(by: Int) {
         val start = nowMillis
+        val samples = samplesForHold()
         beginHold()
-        for (index in 0..SAMPLES_PER_HOLD) {
+        for (index in 0..samples) {
             nowMillis = start + index * SAMPLE_INTERVAL_MILLIS
             onSample(sample(o1 = if (index % 2 == 0) 0 else by), nowMillis)
         }
@@ -578,8 +606,9 @@ class CalibrationSessionTest {
     /** A pose that never settles: every sample further from the last, so no plateau exists. */
     private fun CalibrationSession.holdDrifting() {
         val start = nowMillis
+        val samples = samplesForHold()
         beginHold()
-        for (index in 0..SAMPLES_PER_HOLD) {
+        for (index in 0..samples) {
             nowMillis = start + index * SAMPLE_INTERVAL_MILLIS
             onSample(sample(o1 = index * DRIFT_STEP_UNITS), nowMillis)
         }
@@ -605,7 +634,6 @@ class CalibrationSessionTest {
 
     private companion object {
         const val SAMPLE_INTERVAL_MILLIS = 40L
-        const val SAMPLES_PER_HOLD = 50
         const val GAP_BETWEEN_POSES_MILLIS = 1_000L
         const val DRIFT_STEP_UNITS = 200
 
