@@ -2,12 +2,17 @@
 #
 # Every hardware-blocked task left in specs/, as one command.
 #
-# Five tasks across three features need what nothing else in this repository needs: AirPods
-# Pro 3 in the ears, an open AAP channel, and a person willing to hold four poses.
+# Six tasks across four features need the accessory. Most need it in the ears; one, happily,
+# only needs it on a table.
 #
-#   004 T060, T061, T062  calibration on a real head, the gesture thresholds after it, the write-up
+#   006 T018, T019        gravity tilt against a known angle - ON A TABLE, no wearer needed
+#   004 T061, T064        gesture thresholds after a calibration, and the three-minute claim
 #   003 T070a             heart rate quickstart sections 4 to 7, never walked
 #   005 T038              the live-surface walk, whose record does not exist
+#
+# 004 T060 ran on 2026-08-09 and produced the response matrix. What it found - a gravity
+# vector at report offsets 44/46/48 - is why 006 exists and why the first item above needs
+# no neck: the accessory can be tilted on a table against a protractor.
 #
 # Everything those features can be asked without hardware has been walked and recorded. This
 # script exists so the part that cannot be automated is the *only* part left to do.
@@ -15,13 +20,12 @@
 #   ./scripts/hardware-walk.sh                 # guided run, prompts per pose
 #   ./scripts/hardware-walk.sh --out run.txt   # and keep the transcript
 #
-# What comes out is a transcript, a `cal export` JSON, and a labelled fixture. Paste the export
-# and the response matrix into docs/protocol-research.md — the section "What the calibration
-# wizard has and has not measured" is written to receive them.
+# What comes out is a transcript, a `cal export` JSON, and labelled fixtures. Paste the numbers
+# into docs/protocol-research.md, which has sections written to receive them.
 #
-# If the run reports CROSS_COUPLED on all three axes, **that is the result.** It is the outcome
-# the evidence in docs/protocol-research.md predicts, it is worth more than three scales, and it
-# must be written down rather than tuned away. Do not raise the tolerance until numbers appear.
+# Whatever the wizard reports is the result. On 2026-08-09 it reported a wrong axis assignment
+# and one ambiguous axis, which was worth more than the three scales it was sent to find. Write
+# down what it says; do not move a threshold until the answer looks nicer.
 
 set -uo pipefail
 
@@ -162,17 +166,41 @@ main() {
   read -r -p "Try a nod and a shake, then press Enter. " _
   step --es cmd dump
 
-  say "Done with 004. Paste the export and the response matrix into docs/protocol-research.md,"
-  say "and tick T060 to T062 in specs/004-head-tracking-calibration/tasks.md."
+  say "Done with 004. Paste the export into docs/protocol-research.md; T060 already has its"
+  say "matrix from 2026-08-09, so what is new here is T061 and T064."
 
+  gravity_tilt
   hr_sections_4_to_7
   live_activity_walk
 
   say "Every hardware-blocked task in specs/ has now been driven once:"
-  say "  004 T060, T061, T062   — the calibration run above"
+  say "  004 T061, T064         — the gesture thresholds and the three-minute claim, above"
+  say "  006 T018, T019         — the gravity tilt, on a table"
   say "  003 T070a              — heart rate quickstart sections 4 to 7"
   say "  005 T038               — the live-surface walk"
   say "Tick each only where its output actually says what its task claims."
+}
+
+# 006 T018 and T019: the gravity tilt, checked against a known angle.
+#
+# The only head-tracking claim in this project a person can verify alone. Take the buds out,
+# put one on a table, and tilt it - a protractor, a phone inclinometer or a book edge is
+# enough. Gravity does not care whose head it was on.
+gravity_tilt() {
+  say "006 - gravity tilt, and it needs no wearer"
+  echo "Take an earbud out and set it on the table, resting flat."
+  read -r -p "Press Enter when it is still. " _
+  step --es cmd tilt --es value reference
+
+  echo "Now tilt it by a known angle - 45 or 90 degrees against something straight - and hold."
+  read -r -p "Press Enter while holding it there. " _
+  step --es cmd tilt --es value read
+  echo "SC-001: the reported tilt should match what you set, within 5 degrees."
+
+  echo "Now put it flat again and rotate it on the spot, without tilting."
+  read -r -p "Press Enter while it is rotated. " _
+  step --es cmd tilt --es value read
+  echo "SC-002: the tilt should barely move - under 3 degrees. Gravity cannot see that turn."
 }
 
 # 003 T070a: quickstart sections 4 to 7. Never walked — the hardware went away in 2026-08-04's
