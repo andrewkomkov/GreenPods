@@ -116,6 +116,12 @@ main() {
   adb shell svc power stayon usb >/dev/null 2>&1
   adb logcat -c >/dev/null 2>&1
 
+  # SC-001 asks for a full run in under three minutes including reading the instructions, and
+  # T064 exists because no task ever checked it. Timing it here costs nothing and is the only
+  # chance — it needs the same person and the same live wizard as the run itself.
+  local started_at
+  started_at=$(date +%s)
+
   say "1. Is the transport actually open? Blame this before blaming the wizard."
   step --es cmd probe --ez force true
   step --es cmd hid
@@ -143,6 +149,11 @@ main() {
 
   say "7. The fixture. Labelled CAPTURED when it came off a live stream."
   step --es cmd cal --es value fixture
+
+  local elapsed=$(($(date +%s) - started_at))
+  say "SC-001 (T064): the run took $((elapsed / 60))m $((elapsed % 60))s, against a target of three minutes."
+  echo "If it ran long, the number is the finding. Do not shorten the holds to meet it —"
+  echo "the hold duration is a measurement parameter now, not a pacing choice."
 
   say "8. FR-024: do the gesture thresholds still fire? This is T061."
   echo "Turn head gestures on, then nod and shake with the calibration stored."
