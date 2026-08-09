@@ -1,5 +1,6 @@
 package io.github.andrewkomkov.greenpods.core.bluetooth.aap
 
+import android.util.Log
 import io.github.andrewkomkov.greenpods.core.model.BatteryComponent
 import io.github.andrewkomkov.greenpods.core.model.BatteryState
 import io.github.andrewkomkov.greenpods.core.model.ChargeStatus
@@ -442,6 +443,24 @@ class AapDecoder(
     private fun decodeHeadTracking(report: ByteArray): AapEvent? {
         if (report.size < HEAD_TRACKING_MIN_REPORT_BYTES) return null
 
+        // The whole report, when somebody explicitly asks for it.
+        //
+        // Five int16 are decoded below out of a report the descriptor declares as 182 bytes,
+        // so about 170 bytes have never been looked at — and one candidate in there, four
+        // consecutive int16 holding a near-constant norm, is the shape of a quaternion. If it
+        // is one, the accessory is already sending an orientation and none of the calibration
+        // machinery is needed.
+        //
+        // `AapTransport` withholds HID report bodies from its log, and rightly: heart rate
+        // rides the same opcode and no path may print one. This is scoped to the **motion**
+        // report specifically, so a heart-rate report can never reach it — the privacy floor
+        // is about heart rate, not about bytes in general. It is off unless the tag is
+        // enabled by hand (`adb shell setprop log.tag.AapMotionRaw DEBUG`), which is a
+        // deliberate act by someone at a terminal.
+        if (Log.isLoggable(MOTION_RAW_TAG, Log.DEBUG)) {
+            Log.d(MOTION_RAW_TAG, report.joinToString(" ") { "%02X".format(it) })
+        }
+
         fun le16(offset: Int): Short =
             (
                 ((report[offset + 1].toInt() and 0xFF) shl 8) or
@@ -508,5 +527,13 @@ class AapDecoder(
          * with it. Captured reports from AirPods Pro 3 are 58 bytes.
          */
         const val HEAD_TRACKING_MIN_REPORT_BYTES = 32
+
+        /**
+         * Tag for the raw motion report, off unless enabled by hand.
+         *
+         * Deliberately not the transport's tag: enabling that one would print every frame,
+         * heart-rate reports included, which is the thing that must never happen.
+         */
+        const val MOTION_RAW_TAG = "AapMotionRaw"
     }
 }

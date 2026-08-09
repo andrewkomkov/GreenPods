@@ -142,30 +142,34 @@ data class GreenPodsSettings(
         const val DEFAULT_HR_CONFIDENCE_THRESHOLD = 128
 
         /**
-         * How far a still head wanders, with room to spare. **Measured**, 2026-08-09.
+         * How far a settled head wanders. **Measured 2026-08-09, and it is 900 after all.**
          *
-         * It was 900 until then, and 900 was never a measurement: it came from this feature's
-         * requirements checklist, recording plateaus found in a session captured through a
-         * decoder bug that has since been fixed. The code said as much and asked to be
-         * corrected by measurement rather than by taste.
+         * This value was raised to 2500 earlier the same day and the reasoning was wrong, so
+         * the reasoning is written down here rather than quietly dropped. Poses were being
+         * refused with "moved 1571 units over the whole hold", which read as the tolerance
+         * sitting below the drift of a stationary head. It was not: `PlateauDetector.refusal`
+         * reports the widest span over **every** collected sample, including the second or two
+         * in which the wearer is still arriving at the pose. The number described settling, not
+         * drift, and 2500 was fitted to a measurement of the wrong thing.
          *
-         * Here is the measurement. AirPods Pro 3 on a Pixel 8, both buds in, a wearer sitting
-         * still and looking straight ahead for two seconds — 41 samples at ~21 Hz:
+         * What a settled head actually does, from the run that finally completed — the widest
+         * span of any orientation field over each full three-second hold:
          *
-         * | field | span over the hold |
-         * |-------|--------------------|
-         * | `o1`  | 730                |
-         * | `o2`  | 1571               |
-         * | `o3`  | 1671               |
+         * | pose | widest span |
+         * |------|-------------|
+         * | yaw | 87 |
+         * | pitch | 127 |
+         * | roll | 247 |
          *
-         * So 900 sat *below the drift of a stationary head* and refused every pose on the
-         * hardware this feature exists for. 2500 clears the largest span with about half again
-         * as much room, which is the margin a single session's worth of evidence supports —
-         * one wearer, one accessory, one sitting. It is a better number than 900 and it is
-         * still not a law; the raw capture is in `docs/protocol-research.md` for anyone who
-         * disagrees, and this stays a setting.
+         * So 900 carries roughly four times the room the worst pose needed, and the real defect
+         * was elsewhere: the countdown and the required plateau were the same number, so the
+         * plateau had to span the whole window and the settling could never be excluded from it.
+         * See `CalibrationSession.SETTLE_MARGIN_MILLIS`.
+         *
+         * 900 remains what it always was — a starting point from this feature's requirements
+         * checklist, not a law — and it stays a setting.
          */
-        const val DEFAULT_CALIBRATION_TOLERANCE_UNITS = 2_500
+        const val DEFAULT_CALIBRATION_TOLERANCE_UNITS = 900
 
         /**
          * Rails, not policy. Below 50 units nothing a real sensor produces would ever settle;

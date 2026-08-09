@@ -582,6 +582,71 @@ that the instrument works and that its refusals are reachable — nothing about 
 orientation unit is worth in degrees, and nothing about whether the cross-coupling above
 reproduces.
 
+### The accessory sends gravity, at report offsets 44/46/48 — 2026-08-09
+
+**This is the finding that changes the feature.** The motion report carries a gravity
+direction vector, and it has been sitting there undecoded the whole time.
+
+The devmotion input report is **58 bytes**: a report id, an 8-byte nanosecond counter, and
+then the payload. Five int16 of it were decoded — `o1..o3` at 20/22/24 and two fields called
+accelerations at 28/30 — and the rest was never looked at. Searching every int16 window in the
+report for a stable norm over 1268 captured reports found one:
+
+| offsets | norm | spread | components that move |
+|---|---|---|---|
+| **44, 46, 48** | **1034** (≈1024 = 2¹⁰) | **0.37 %** | all three |
+
+A three-vector of constant magnitude whose components each swing by 400–500 units is a
+direction, and the norm of 1024 per unit says it is scaled in powers of two rather than to the
+int16 range.
+
+**What it is a direction of, proved by a movement it ignores.** Over a recorded sequence — sit
+still, turn the head 90° right and hold, return, chin down and hold, return, ear to the left
+shoulder and hold, return — the vector behaves like this:
+
+| segment | x (44) | y (46) | z (48) | norm | change from rest |
+|---|---:|---:|---:|---:|---|
+| at rest | −629 | 657 | 495 | 1036 | — |
+| **90° yaw turn** | −638 | 657 | 484 | 1036 | **(−9, 0, −11)** |
+| chin down | −290 | 845 | 506 | 1027 | (+339, +188, +11) |
+| ear to shoulder | −447 | 364 | 860 | 1035 | (+183, −293, +364) |
+
+During the yaw turn the vector does not move — nine units on one axis and eleven on another,
+against a per-axis swing of several hundred for the tilts. Meanwhile `o2` and `o3` moved by
++12467 and −7744 in that same window. So one set of fields sees the turn and this one is blind
+to it, which is the defining property of gravity: rotation **about** the gravity axis cannot
+change the direction of gravity.
+
+The consequences are large, and most of them are good.
+
+- **Pitch and roll are already available as real angles, with no calibration at all.** The
+  angle between the current gravity vector and the one recorded with the head upright is the
+  tilt, by trigonometry, and the unknown scale cancels in the ratio. Over the sequence above it
+  read 21° and 29° for the two tilts.
+- **Yaw is not recoverable from this vector, ever.** Not a decoding gap — a geometric fact. Yaw
+  needs `o1..o3` or a gyroscope, and it is the one axis a calibration wizard is still required
+  for.
+- **It explains the 195° pitch.** The app reads `o2` for pitch, and `o2` is dominated by yaw.
+- **It explains why the pose run reported `pitch = MISMATCHED expected=O2 field=O3` and
+  `roll = MISMATCHED expected=O3 field=O2`.** The whole `O1→YAW, O2→PITCH, O3→ROLL` assignment
+  is wrong, and `o1` in particular moved less than the plateau tolerance for every pose.
+
+**What is still unknown.** The bud sits at an angle in the ear, so no single component of the
+vector is pitch or roll on its own — the rest reading (−629, 657, 495)/1036 encodes that
+mounting rotation. Total tilt from upright needs nothing; splitting it into pitch and roll
+needs the mounting rotation, which is a two-parameter fit from a single held pose rather than
+the three-pose scale hunt this feature was built around. And what `o1..o3` are remains open:
+they are not Euler angles, and their norm is not constant (3.4 % spread), so the earlier
+quaternion hypothesis does not hold for them either.
+
+**The quaternion at 26/28/30/32 is disproved.** Its norm looked constant at 0.9695 because
+offset 32 is very nearly a constant — it varies by 136 units across the whole capture while its
+neighbours vary by ~500 and are ~100× smaller in magnitude. A large constant plus small noise
+has a stable norm trivially. That was a real trap and it swallowed an earlier session.
+
+The capture is `core/bluetooth/src/test/resources/aap/devmotion-report-bodies.txt`, labelled by
+segment.
+
 ### What a still head actually does — measured 2026-08-09
 
 **Pixel 8 (shiba), Android 17, AirPods Pro 3, both buds in, AAP channel open.** The first
@@ -589,27 +654,22 @@ labelled orientation capture this repository has held. A wearer sitting still an
 straight ahead, one two-second hold, 41 samples at **≈21 Hz**:
 
 | field | min | max | span | median |
-|---|---|---|---|---|
-| `o1` | −25562 | −24832 | **730** | −24942 |
-| `o2` | −15054 | −13483 | **1571** | −14871 |
-| `o3` | 11756 | 13427 | **1671** | 11852 |
-| `horizontalAcceleration` | −195 | 22 | 217 | −1 |
-| `verticalAcceleration` | −73 | 384 | 457 | 13 |
+|---|---:|---:|---:|---:|
+| `o1` | −25562 | −24832 | 730 | −24942 |
+| `o2` | −15054 | −13483 | 1571 | −14871 |
+| `o3` | 11756 | 13427 | 1671 | 11852 |
 
-Two things fall out of it immediately, and both were invisible without hardware.
+**The values are nowhere near zero and they drift continuously.** A "neutral" head reads about
+(−24900, −14900, 11850), not (0, 0, 0) — which is what FR-010 anticipated by deriving every
+scale as a difference against the neutral hold rather than from an absolute.
 
-**The values are nowhere near zero and they drift continuously.** A "neutral" head reads
-about (−24900, −14900, 11850), not (0, 0, 0) — which is what FR-010 anticipated by deriving
-every scale as a difference against the neutral hold rather than from an absolute.
-
-**The plateau tolerance of 900 units sat below the drift of a stationary head.** `o2` and `o3`
-both exceeded it while the wearer was doing nothing, so every pose was refused as never
-settled. That number was never a measurement — it came from this feature's requirements
-checklist, recording plateaus in a session captured through a decoder bug since fixed, and the
-code said so and asked to be corrected by measurement. This is that correction: the default is
-now **2500**, which clears the largest span with about half again as much room. One wearer,
-one accessory, one sitting — better than 900 and still not a law, which is why it stays a
-setting (`gp --es cmd set --es key calibrationToleranceUnits`).
+**The spans above are not drift, and reading them as drift cost an hour.** They come from a
+window that includes the wearer arriving at the pose; `PlateauDetector.refusal` reports the
+widest span over every collected sample, not over the steadiest stretch inside it. Measured
+properly — the widest span of any field across each full hold of the run that completed — a
+settled head moves **87 units for yaw, 127 for pitch, 247 for roll**. The plateau tolerance of
+900 was never the problem, and a default raised to 2500 on the strength of the first reading
+has been put back. The real defect is the next section.
 
 ### The countdown and the plateau were the same number, so no pose could pass
 
