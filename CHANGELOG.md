@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/andrewkomkov/GreenPods/compare/v0.5.2...v0.6.0) (2026-08-10)
+
+
+### Features
+
+* **app:** give the live surface controls, and make them driveable from adb ([#19](https://github.com/andrewkomkov/GreenPods/issues/19)) ([3553cc6](https://github.com/andrewkomkov/GreenPods/commit/3553cc60060e7550203008c0ba025c4492a65550))
+* **head:** run the calibration wizard on a real head, and find the gravity vector it was looking for ([#20](https://github.com/andrewkomkov/GreenPods/issues/20)) ([45b4c30](https://github.com/andrewkomkov/GreenPods/commit/45b4c307c500b26a69ad7a2e45f363a4c5c1d565))
+
 ## [0.5.2](https://github.com/andrewkomkov/GreenPods/compare/v0.5.1...v0.5.2) (2026-08-06)
 
 
