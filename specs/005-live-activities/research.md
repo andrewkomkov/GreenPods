@@ -100,8 +100,16 @@ promoted notifications off for the app in system settings. That is a legitimate 
 an error, and it maps onto exactly the distinction Principle II exists for — the user must
 be able to tell "my phone can't", "I turned this off", and "the app is broken" apart.
 
-`Settings.ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS` is the route back, and the gate reason
+`Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS` is the route back, and the gate reason
 carries it.
+
+**Corrected 2026-08-06.** This line originally named `ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS`,
+which exists in no SDK — `platforms/android-36/data/api-versions.xml` declares
+`ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS since="36"` and nothing by the other name. The
+invented name propagated from here into T011 and was only caught when someone tried to compile
+it. Worth noticing *how* it survived: a plausible-looking constant in prose is not checked by
+anything until code names it, which is the same failure mode as an unpinned protocol fact —
+recorded in the project's memory, believed, and load-bearing.
 
 **Also**: users can dismiss a live update. The platform guidance is explicit that an app
 must not repost a dismissed one. A `deleteIntent` records the dismissal so the surface stays

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the live surface's buttons say, and how it names a listening mode.
+
+  Separate from strings.xml only so two people can work on the surface at once; Android
+  merges every values file, so these are ordinary app strings.
+-->
+<resources>
+
+    <!-- The mode the accessory reports. Never a mode that has only been asked for. -->
+    <string name="live_noise_control">Noise control: %1$s</string>
+
+    <!--
+      Locked, with the gate's own reason attached rather than hidden (FR-012). A missing
+      control reads as a bug; a locked one explains the phone.
+    -->
+    <string name="live_noise_control_locked">Noise control locked: %1$s</string>
+
+    <!--
+      Names the mode the press asks for, not one anything has confirmed. The write is not
+      the change: the line above only moves when the accessory echoes.
+    -->
+    <string name="live_action_switch_to">Switch to %1$s</string>
+    <string name="live_action_noise_control_locked">Why is this locked?</string>
+
+    <!-- Stops the sensor in the earbuds, not merely the reading on screen (FR-016). -->
+    <string name="live_action_stop_sensing">Stop sensing</string>
+
+    <string name="live_mode_off">Off</string>
+    <string name="live_mode_anc">ANC</string>
+    <string name="live_mode_transparency">Transparency</string>
+    <string name="live_mode_adaptive">Adaptive</string>
+
+</resources>

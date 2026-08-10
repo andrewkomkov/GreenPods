@@ -2,6 +2,7 @@ package io.github.andrewkomkov.greenpods.feature.settings
 
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import app.cash.turbine.ReceiveTurbine
 import app.cash.turbine.test
 import io.github.andrewkomkov.greenpods.core.bluetooth.ble.PodSightingSource
 import io.github.andrewkomkov.greenpods.core.data.PodRepository
@@ -23,9 +24,12 @@ import io.github.andrewkomkov.greenpods.core.data.update.UpdateStatus
 import io.github.andrewkomkov.greenpods.core.model.GestureAction
 import io.github.andrewkomkov.greenpods.core.model.HeadGesture
 import io.github.andrewkomkov.greenpods.core.model.HeadGestureBinding
+import io.github.andrewkomkov.greenpods.core.model.LiveActivityAvailability
 import io.github.andrewkomkov.greenpods.core.model.ScanMode
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.emptyFlow
@@ -111,10 +115,44 @@ class SettingsViewModelTest {
         override fun requiredPermissions(): Set<String> = setOf("write-heart-rate", "read-heart-rate")
     }
 
+    /**
+     * The first state that came from the view model rather than from `stateIn`'s seed.
+     *
+     * `SettingsUiState()` is emitted before the combine has run, and its defaults claim the
+     * live surface is available — which is the very answer half of these tests exist to
+     * disprove. `appVersion` is the discriminator: only the combined state carries it.
+     */
+    private suspend fun ReceiveTurbine<SettingsUiState>.awaitCombined(): SettingsUiState {
+        var state = awaitItem()
+        while (state.appVersion.isBlank()) state = awaitItem()
+        return state
+    }
+
+    /**
+     * A gate answer the test controls, standing in for a platform it cannot have.
+     *
+     * The four unavailable states are unreachable on a JVM and three of the four are
+     * unreachable on the maintainer's phone as well — an Android 15 device, a revoked
+     * notification permission and a device that declines to promote are all states real
+     * users sit in permanently. Reading the availability through an interface is what
+     * makes "locked, with the reason attached" testable in both directions at all.
+     */
+    private class FakeLiveActivity(
+        var status: LiveActivityUiState = LiveActivityUiState(),
+    ) : LiveActivityStatusSource {
+        var reads = 0
+
+        override fun read(): LiveActivityUiState {
+            reads++
+            return status
+        }
+    }
+
     private fun TestScope.viewModel(
         diagnostics: DiagnosticsLog = DiagnosticsLog(clock = { 0L }),
         checker: UpdateSource = stub(UpdateStatus.UpToDate),
         health: HealthConnectLink? = null,
+        live: LiveActivityStatusSource = FakeLiveActivity(),
     ): SettingsViewModel {
         val settings =
             SettingsRepository(
@@ -141,6 +179,7 @@ class SettingsViewModelTest {
             podRepository = pods,
             updateChecker = checker,
             appVersion = "1.0.0",
+            liveActivity = live,
             health = health,
         )
     }
@@ -460,7 +499,176 @@ class SettingsViewModelTest {
             }
         }
 
+    @Test
+    fun `a phone that can show the live surface gets the switches and no reason`() =
+        runTest(dispatcher) {
+            val viewModel = viewModel(live = FakeLiveActivity(LiveActivityUiState(LiveActivityAvailability.Available)))
+
+            viewModel.state.test(timeout = settled) {
+                val state = awaitCombined()
+
+                state.liveActivity.isAvailable shouldBe true
+                // Nothing to explain, so no sentence to resolve.
+                state.liveActivity.reasonRes shouldBe 0
+                state.liveActivity.reasonArgs shouldBe emptyList()
+                state.liveActivity.hasRouteBack shouldBe false
+                state.settings.liveActivityEnabled shouldBe true
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `every unavailable state reaches the screen with its own reason`() =
+        runTest(dispatcher) {
+            // The constitution wants gate-dependent behaviour tested in both states, and
+            // "unavailable" is four states rather than one. Collapsing them is the exact
+            // failure Principle II exists to prevent: a user who cannot tell "my phone
+            // can't" from "I turned this off" from "GreenPods is broken".
+            //
+            // The ids stand in for `R.string.live_unavailable_*`, which this module cannot
+            // name — what is under test here is that each state arrives with a distinct,
+            // non-zero sentence to draw and its arguments intact, so the locked card is
+            // never empty. Which id belongs to which state is the host's mapping.
+            val cases =
+                listOf(
+                    LiveActivityAvailability.PlatformTooOld(apiLevel = 34) to
+                        LiveActivityUiState(LiveActivityAvailability.PlatformTooOld(34), PLATFORM_RES, listOf(34)),
+                    LiveActivityAvailability.NotificationsDenied to
+                        LiveActivityUiState(LiveActivityAvailability.NotificationsDenied, DENIED_RES),
+                    LiveActivityAvailability.PromotionRefused to
+                        LiveActivityUiState(LiveActivityAvailability.PromotionRefused, REFUSED_RES),
+                    LiveActivityAvailability.NotPromotable("style") to
+                        LiveActivityUiState(
+                            LiveActivityAvailability.NotPromotable("style"),
+                            NOT_PROMOTABLE_RES,
+                            listOf("style"),
+                        ),
+                )
+
+            cases.forEach { (availability, expected) ->
+                val viewModel = viewModel(live = FakeLiveActivity(expected))
+
+                viewModel.state.test(timeout = settled) {
+                    val state = awaitCombined()
+
+                    state.liveActivity.availability shouldBe availability
+                    state.liveActivity.isAvailable shouldBe false
+                    // Carried through untouched, and never zero — a zero id would draw a
+                    // locked card with nothing on it, which is the "is this broken?" the
+                    // whole state exists to prevent.
+                    state.liveActivity.reasonRes shouldBe expected.reasonRes
+                    state.liveActivity.reasonRes shouldNotBe 0
+                    state.liveActivity.reasonArgs shouldBe expected.reasonArgs
+                    cancelAndIgnoreRemainingEvents()
+                }
+            }
+
+            // Four states, four different sentences. One id reused would read to a user as
+            // one explanation for two different situations.
+            cases.map { it.second.reasonRes }.distinct().size shouldBe cases.size
+        }
+
+    @Test
+    fun `only a refused promotion offers a route back`() =
+        runTest(dispatcher) {
+            // FR-014a gives every unavailable state a reason; only one of them has a
+            // system screen behind it. A button on the other three would land somewhere
+            // that changes nothing, which is worse than no button.
+            val withRoute = LiveActivityUiState(LiveActivityAvailability.PromotionRefused, REFUSED_RES)
+            val withoutRoute =
+                listOf(
+                    LiveActivityUiState(LiveActivityAvailability.PlatformTooOld(34), PLATFORM_RES, listOf(34)),
+                    LiveActivityUiState(LiveActivityAvailability.NotificationsDenied, DENIED_RES),
+                    LiveActivityUiState(LiveActivityAvailability.NotPromotable("style"), NOT_PROMOTABLE_RES),
+                    LiveActivityUiState(LiveActivityAvailability.Available),
+                )
+
+            withRoute.hasRouteBack shouldBe true
+            withoutRoute.forEach { it.hasRouteBack shouldBe false }
+        }
+
+    @Test
+    fun `availability is read again rather than cached across a resume`() =
+        runTest(dispatcher) {
+            // The one state a user can undo is undone on a system screen, so it changes
+            // while GreenPods is in the background. A cached refusal would tell them their
+            // own fix had failed.
+            val source = FakeLiveActivity(LiveActivityUiState(LiveActivityAvailability.PromotionRefused, REFUSED_RES))
+            val viewModel = viewModel(live = source)
+
+            viewModel.state.test(timeout = settled) {
+                var state = awaitCombined()
+                state.liveActivity.isAvailable shouldBe false
+
+                source.status = LiveActivityUiState(LiveActivityAvailability.Available)
+                viewModel.refreshLiveActivity()
+                advanceUntilIdle()
+
+                while (!state.liveActivity.isAvailable) state = awaitItem()
+
+                state.liveActivity.isAvailable shouldBe true
+                source.reads shouldBe 2
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `both live-surface switches persist, and hiding the value is a separate decision`() =
+        runTest(dispatcher) {
+            val viewModel = viewModel()
+
+            viewModel.state.test(timeout = settled) {
+                var state = awaitCombined()
+                // FR-018: the value is shown by default. A default of "hidden" would make
+                // the surface's most useful moment the one it says nothing in.
+                state.settings.liveActivityShowHeartRate shouldBe true
+
+                viewModel.setLiveActivityShowHeartRate(false)
+                advanceUntilIdle()
+                while (state.settings.liveActivityShowHeartRate) state = awaitItem()
+
+                // FR-018a: hiding the number is not turning the surface off, and it is not
+                // hiding the disclosure either. The two settings stay independent.
+                state.settings.liveActivityEnabled shouldBe true
+
+                viewModel.setLiveActivityEnabled(false)
+                advanceUntilIdle()
+                while (state.settings.liveActivityEnabled) state = awaitItem()
+
+                state.settings.liveActivityEnabled shouldBe false
+                state.settings.liveActivityShowHeartRate shouldBe false
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `the heart-rate switch says it hides the number and not the disclosure`() {
+        // FR-018a is a boundary carried by one sentence, and a sentence in the middle of a
+        // screen decays the first time somebody tidies the wording. This is the guard.
+        LiveActivitySettingsCopy.HEART_RATE_DESCRIPTION shouldContain "hides the number"
+        LiveActivitySettingsCopy.HEART_RATE_DESCRIPTION shouldContain "never hides"
+        LiveActivitySettingsCopy.HEART_RATE_DESCRIPTION shouldContain "sensor is running"
+
+        // And nothing in the section may promise the sensor can run quietly.
+        LiveActivitySettingsCopy.everySentence().forEach { sentence ->
+            sentence.isNotBlank() shouldBe true
+            sentence.lowercase() shouldNotContain "hides the sensor"
+        }
+    }
+
     private companion object {
         var counter = 0
+
+        /**
+         * Stand-ins for `R.string.live_unavailable_*`, which this module cannot name.
+         *
+         * Arbitrary but distinct: what the view model owes the screen is a specific,
+         * non-zero id per state, not any particular one. The id-to-state mapping lives in
+         * the host module with the resources it names.
+         */
+        const val PLATFORM_RES = 101
+        const val DENIED_RES = 102
+        const val REFUSED_RES = 103
+        const val NOT_PROMOTABLE_RES = 104
     }
 }

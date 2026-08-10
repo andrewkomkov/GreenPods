@@ -306,6 +306,11 @@ fun GreenPodsApp(
                         onHeartRateIntervalChanged = viewModel::setHeartRateInterval,
                         onRequestHealthPermission = { launcher?.launch(viewModel.healthPermissions()) },
                         onDeleteHealthRecords = viewModel::deleteHealthRecords,
+                        onLiveActivityChanged = viewModel::setLiveActivityEnabled,
+                        onLiveActivityShowHeartRateChanged = viewModel::setLiveActivityShowHeartRate,
+                        // The live surface's one fixable refusal is fixed on a system
+                        // screen, so the answer changes while this screen is not on top.
+                        onLiveActivityResumed = viewModel::refreshLiveActivity,
                     )
                 }
             }

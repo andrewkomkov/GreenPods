@@ -107,7 +107,7 @@ what the accessory reports:
 
 ```bash
 gp --es cmd live       # note the mode before
-# tap the action on the device
+gp --es cmd live --es action cycle
 gp --es cmd live       # the mode must match what the accessory echoed
 ```
 
@@ -138,7 +138,7 @@ with the value, that is the failure FR-018a names.
 Then stop it from the surface and confirm the sensor really stopped:
 
 ```bash
-# use the stop action on the device
+gp --es cmd live --es action stop
 gp --es cmd hr --es value status     # reports must have ceased
 ```
 

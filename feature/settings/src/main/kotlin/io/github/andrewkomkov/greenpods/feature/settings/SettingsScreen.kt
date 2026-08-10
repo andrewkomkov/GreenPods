@@ -1,5 +1,10 @@
 package io.github.andrewkomkov.greenpods.feature.settings
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +25,7 @@ import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Radar
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
@@ -42,8 +48,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import io.github.andrewkomkov.greenpods.core.data.live.LiveActivityGate
+import io.github.andrewkomkov.greenpods.core.designsystem.component.LockedCard
 import io.github.andrewkomkov.greenpods.core.designsystem.component.LockedSurface
 import io.github.andrewkomkov.greenpods.core.designsystem.component.SectionCard
 import io.github.andrewkomkov.greenpods.core.designsystem.component.SegmentedChoice
@@ -85,7 +97,19 @@ fun SettingsScreen(
     onHeartRateIntervalChanged: (Int) -> Unit = {},
     onRequestHealthPermission: () -> Unit = {},
     onDeleteHealthRecords: () -> Unit = {},
+    onLiveActivityChanged: (Boolean) -> Unit = {},
+    onLiveActivityShowHeartRateChanged: (Boolean) -> Unit = {},
+    /**
+     * Re-read the live surface's availability.
+     *
+     * Called on every resume because the state this screen sends the user away to change
+     * is changed *off* this screen. Coming back to the same locked card after turning
+     * promoted notifications on would read as the fix having failed.
+     */
+    onLiveActivityResumed: () -> Unit = {},
 ) {
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { onLiveActivityResumed() }
+
     Column(
         modifier =
             modifier
@@ -109,6 +133,13 @@ fun SettingsScreen(
             onBackgroundMonitoringChanged = onBackgroundMonitoringChanged,
             onLowBatteryWarningChanged = onLowBatteryWarningChanged,
             onLowBatteryThresholdChanged = onLowBatteryThresholdChanged,
+        )
+
+        LiveActivitySection(
+            settings = state.settings,
+            live = state.liveActivity,
+            onLiveActivityChanged = onLiveActivityChanged,
+            onShowHeartRateChanged = onLiveActivityShowHeartRateChanged,
         )
 
         HeartRateSection(
@@ -217,6 +248,188 @@ private fun MonitoringSection(
             valueRange = GreenPodsSettings.MIN_THRESHOLD.toFloat()..GreenPodsSettings.MAX_THRESHOLD.toFloat(),
             enabled = settings.lowBatteryWarningEnabled,
         )
+    }
+}
+
+/**
+ * Every word the live-surface section says.
+ *
+ * In one object for the same reason [HeartRateSettingsCopy] is: [HEART_RATE_DESCRIPTION]
+ * carries FR-018a, and a boundary written into one sentence in the middle of a screen
+ * decays the first time somebody tidies the wording. Here a unit test can walk it.
+ *
+ * The *reasons* are not here. Those are string resources (`live_unavailable_*`), whose ids
+ * the host module hands over in [LiveActivityUiState.reasonRes] and which this screen
+ * resolves as it draws — a feature module carries no resources and cannot see `app`'s.
+ */
+internal object LiveActivitySettingsCopy {
+    const val TITLE = "Live status surface"
+    const val SUMMARY = "Show battery, wear and listening mode on the lock screen."
+
+    const val ENABLE_TITLE = "Show the live surface"
+
+    /**
+     * Says what it replaces, because that is the whole reason it defaults to on.
+     *
+     * It is not a second persistent thing on the phone; it is the monitoring notification
+     * the user already has, promoted.
+     */
+    const val ENABLE_DESCRIPTION = "Promotes the monitoring notification GreenPods already shows. Nothing new appears."
+
+    const val HEART_RATE_TITLE = "Show heart rate on the live surface"
+
+    /**
+     * The asymmetry, stated where the switch is (FR-018a).
+     *
+     * A user may decline to display their heart rate on a screen anyone can read. They may
+     * not have the sensor run without being told it is running, so this switch is written
+     * as hiding a *number* rather than as hiding heart rate.
+     */
+    const val HEART_RATE_DESCRIPTION =
+        "Turning this off hides the number. It never hides the fact that the sensor is running."
+
+    /** The one unavailable state with somewhere to send the user (FR-014a). */
+    const val ROUTE_BACK = "Open notification settings"
+
+    /** Every sentence above, for the test that walks them. */
+    fun everySentence(): List<String> =
+        listOf(
+            TITLE,
+            SUMMARY,
+            ENABLE_TITLE,
+            ENABLE_DESCRIPTION,
+            HEART_RATE_TITLE,
+            HEART_RATE_DESCRIPTION,
+            ROUTE_BACK,
+        )
+}
+
+/**
+ * The live status surface — and, on most phones, why it will not appear.
+ *
+ * Locked rather than hidden, even though FR-014 deliberately gives those phones nothing
+ * new. A scope decision is not licence to leave someone unable to tell a feature their
+ * phone lacks from a feature that is broken (FR-014a, Principle II), so the switches stay
+ * on screen, legible and inert, underneath the sentence that explains them.
+ *
+ * On [LiveActivityUiState.hasRouteBack] there is one more thing to press: the user turned
+ * promoted notifications off themselves, and the system screen where they turn them back
+ * on is a place this app can open.
+ */
+@Composable
+private fun LiveActivitySection(
+    settings: GreenPodsSettings,
+    live: LiveActivityUiState,
+    onLiveActivityChanged: (Boolean) -> Unit,
+    onShowHeartRateChanged: (Boolean) -> Unit,
+) {
+    if (!live.isAvailable) {
+        val context = LocalContext.current
+
+        LockedCard(
+            // The same title as when it works: the card's own texture, lock and sentence
+            // already say it does not, and renaming the feature when it is locked would
+            // leave the user hunting for a section that changed its name.
+            title = LiveActivitySettingsCopy.TITLE,
+            // Resolved here, at draw time, against the configuration in force now — see
+            // LiveActivityUiState. A zero id cannot happen alongside an unavailable state,
+            // and an empty body is a quieter failure than a crash if one ever does.
+            body =
+                if (live.reasonRes == 0) {
+                    ""
+                } else {
+                    stringResource(live.reasonRes, *live.reasonArgs.toTypedArray())
+                },
+            icon = Icons.Filled.Smartphone,
+        ) {
+            Column(
+                modifier = Modifier.alpha(LOCKED_ALPHA),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                LiveActivityRows(settings, enabled = false, onLiveActivityChanged, onShowHeartRateChanged)
+            }
+            if (live.hasRouteBack) {
+                OutlinedButton(
+                    onClick = { context.openPromotedNotificationSettings() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(LiveActivitySettingsCopy.ROUTE_BACK)
+                }
+            }
+        }
+        return
+    }
+
+    SectionCard(
+        title = LiveActivitySettingsCopy.TITLE,
+        subtitle = LiveActivitySettingsCopy.SUMMARY,
+        icon = Icons.Filled.Smartphone,
+    ) {
+        LiveActivityRows(settings, enabled = true, onLiveActivityChanged, onShowHeartRateChanged)
+    }
+}
+
+@Composable
+private fun LiveActivityRows(
+    settings: GreenPodsSettings,
+    enabled: Boolean,
+    onLiveActivityChanged: (Boolean) -> Unit,
+    onShowHeartRateChanged: (Boolean) -> Unit,
+) {
+    SwitchRow(
+        title = LiveActivitySettingsCopy.ENABLE_TITLE,
+        description = LiveActivitySettingsCopy.ENABLE_DESCRIPTION,
+        // Locked, the switch shows the state of the world rather than the stored
+        // preference: nothing is being surfaced, whatever the setting says.
+        checked = settings.liveActivityEnabled && enabled,
+        onCheckedChange = onLiveActivityChanged,
+        enabled = enabled,
+    )
+    SwitchRow(
+        title = LiveActivitySettingsCopy.HEART_RATE_TITLE,
+        description = LiveActivitySettingsCopy.HEART_RATE_DESCRIPTION,
+        checked = settings.liveActivityShowHeartRate && enabled,
+        onCheckedChange = onShowHeartRateChanged,
+        // Greyed by the switch above it, which is the one case where grey is the honest
+        // signal: it is another switch on this screen that turns it back on.
+        enabled = enabled && settings.liveActivityEnabled,
+    )
+}
+
+/**
+ * Opens the system screen where promoted notifications are turned back on.
+ *
+ * `Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS` arrived with the feature itself in
+ * Android 16, and `minSdk` here is 26, so it is checked at runtime rather than at compile
+ * time. The check is belt and braces: `PromotionRefused` cannot be reached below API 36 —
+ * the gate answers `PlatformTooOld` first — so the button that calls this does not exist
+ * on a phone that could not open the screen.
+ *
+ * The fallback is the app's own notification settings, which has existed since API 26. A
+ * device is allowed to ship without either activity, and being unable to open a settings
+ * screen is not a crash: the last resort is that nothing happens, never a stack trace.
+ *
+ * (The spec names this action `ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS`. No such constant
+ * exists in any SDK — the one Android 16 shipped is the name used here.)
+ */
+private fun Context.openPromotedNotificationSettings() {
+    val candidates =
+        buildList {
+            if (Build.VERSION.SDK_INT >= LiveActivityGate.MIN_SDK) {
+                add(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
+            }
+            add(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        }
+
+    for (action in candidates) {
+        val intent = Intent(action).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+        try {
+            startActivity(intent)
+            return
+        } catch (_: ActivityNotFoundException) {
+            // This device does not have that screen. Try the next, and if there is no
+            // next, leave the reason on the card rather than crashing on top of it.
+        }
     }
 }
 

@@ -8,6 +8,7 @@ import io.github.andrewkomkov.greenpods.core.model.GreenPodsSettings
 import io.github.andrewkomkov.greenpods.core.model.HeartRateReading
 import io.github.andrewkomkov.greenpods.core.model.HeartRateState
 import io.github.andrewkomkov.greenpods.core.model.LiveActivityAvailability
+import io.github.andrewkomkov.greenpods.core.model.NoiseControlMode
 import io.github.andrewkomkov.greenpods.core.model.PodComponent
 import io.github.andrewkomkov.greenpods.core.model.PodModel
 import io.github.andrewkomkov.greenpods.core.model.PodState
@@ -41,6 +42,8 @@ class LiveActivityPolicyTest {
         transports: Set<Transport> = setOf(Transport.BLE_ADVERTISEMENT, Transport.AAP_L2CAP),
         heartRate: HeartRateState = HeartRateState.Off,
         address: String = "AA:BB:CC:DD:EE:FF",
+        /** What the accessory has *reported*. Nothing else can put a mode on the surface. */
+        mode: NoiseControlMode? = null,
         // Pro 3 rather than Pro 2: `PodState.heartRate` applies the transport gate, so a
         // model with no sensor reports Unsupported and never reaches a sensing state.
         model: PodModel = PodModel.AIRPODS_PRO_3,
@@ -56,6 +59,7 @@ class LiveActivityPolicyTest {
                     case = BatteryComponent(case, status),
                 ),
             earDetection = EarDetectionState(WearState.IN_EAR, WearState.IN_EAR),
+            noiseControlMode = mode,
             heartRateSession = heartRate,
             activeTransports = transports,
             transportStatuses =
@@ -146,6 +150,50 @@ class LiveActivityPolicyTest {
                 .shouldBeInstanceOf<ControlState.Locked>()
 
         locked.reason.isNotBlank() shouldBe true
+    }
+
+    @Test
+    fun `a write the accessory has not echoed leaves the surface unchanged`() {
+        // The characteristic failure of this transport is a command that is accepted and
+        // then never applied. Pressing the surface's listening-mode button sends one; if
+        // the surface moved on the press, "accepted" and "applied" would look identical
+        // and the user would be told their earbuds did something they did not do.
+        //
+        // So the only input to what the surface says is `PodState.noiseControlMode`, which
+        // exists solely because the accessory echoed a control update. This drives the
+        // press as the app actually experiences it: the same reported state, ticked twice.
+        val policy = LiveActivityPolicy()
+        val reported = pod(mode = NoiseControlMode.OFF)
+
+        val before = decide(pod = reported, policy = policy).shouldBeInstanceOf<LiveActivityDecision.Post>().summary
+
+        // The button was pressed and the command went out. Nothing writes to pod state on
+        // the way — only a decoded echo does — so the next tick carries the same reading.
+        val after = decide(pod = reported, policy = policy).shouldBeInstanceOf<LiveActivityDecision.Post>().summary
+
+        after.noiseControl shouldBe before.noiseControl
+        after.noiseControl.shouldBeInstanceOf<ControlState.Offered>().mode shouldBe NoiseControlMode.OFF
+
+        // And when the accessory does answer, the surface follows it — the mode is not
+        // pinned, it is simply never ahead of the hardware.
+        decide(pod = pod(mode = NoiseControlMode.TRANSPARENCY), policy = policy)
+            .shouldBeInstanceOf<LiveActivityDecision.Post>()
+            .summary
+            .noiseControl
+            .shouldBeInstanceOf<ControlState.Offered>()
+            .mode shouldBe NoiseControlMode.TRANSPARENCY
+    }
+
+    @Test
+    fun `an accessory that has reported no mode is offered the control without one`() {
+        // A control that vanished until the accessory spoke would read as a broken button.
+        // Saying nothing about the mode is the honest half; still offering the press is the
+        // other, because whether the control exists is the gate's answer and not this one.
+        summaryOf()
+            .noiseControl
+            .shouldBeInstanceOf<ControlState.Offered>()
+            .mode
+            .shouldBeNull()
     }
 
     @Test
