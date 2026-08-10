@@ -114,10 +114,14 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                 )
             }
 
+            "cal" -> {
+                cal(app, intent)
+            }
+
             else -> {
                 reply(
                     "unknown command '$command'. Known: dump, probe, set, inject, monitor, clear, " +
-                        "hiddenapi, anc, raw, hid, live, hr, health. See docs/adb.md",
+                        "hiddenapi, anc, raw, hid, live, hr, health, cal. See docs/adb.md",
                 )
             }
         }
@@ -129,15 +133,92 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
         waitMillis: Long,
     ) {
         app.applicationScope.launch {
+            val pods = app.awaitPods(waitMillis)
             val json =
                 StateDump.render(
-                    pods = app.awaitPods(waitMillis),
+                    pods = pods,
                     settings = app.settingsRepository.settings.first(),
                     diagnostics = app.diagnostics.events.value,
                     scanFailure = app.podRepository.scanFailure.value,
                     version = app.versionName,
+                    calibrations = app.headCalibrationStore.all(),
+                    connectedModel = pods.firstOrNull()?.model,
                 )
             reply(json)
+        }
+    }
+
+    /**
+     * The head-tracking calibration wizard, driven from a terminal.
+     *
+     * The actions are [io.github.andrewkomkov.greenpods.core.data.head.CalibrationSession]'s own,
+     * one for one. There is no adb-only path into the state machine — a second path would be a
+     * second thing to be wrong, and the value of driving the wizard from here comes entirely
+     * from it being the same wizard the screen drives.
+     *
+     * `feed` is the exception that proves it: it addresses the session directly, because the
+     * head-tracking stream refuses before a single sample arrives when the transport is gated,
+     * and a calibration path that could only be exercised on a phone with a live Apple protocol
+     * channel would be unverifiable on precisely the phones where that matters. It exists in no
+     * release build, and nothing it produces is a measurement of an accessory.
+     */
+    private fun cal(
+        app: GreenPodsApplication,
+        intent: Intent,
+    ) {
+        val out: (String) -> Unit = ::reply
+        when (val value = intent.getStringExtra("value").orEmpty().lowercase()) {
+            // These need nothing in range: the run is already bound to a model.
+            "advance" -> {
+                CalibrationDriver.advance(out)
+            }
+
+            "skip" -> {
+                CalibrationDriver.skip(out)
+            }
+
+            "repeat" -> {
+                CalibrationDriver.repeat(out)
+            }
+
+            "abandon" -> {
+                CalibrationDriver.abandon(out)
+            }
+
+            "status" -> {
+                CalibrationDriver.status(out)
+            }
+
+            "confirm" -> {
+                CalibrationDriver.confirm(intent.getStringExtra("axis"), out)
+            }
+
+            "feed" -> {
+                CalibrationDriver.feed(app, intent.getStringExtra("samples").orEmpty(), out)
+            }
+
+            "finish" -> {
+                app.applicationScope.launch { CalibrationDriver.finish(app, out) }
+            }
+
+            // These name an accessory, so they wait for the scanner the way every other
+            // command that needs one does.
+            "start", "show", "export", "clear", "fixture" -> {
+                app.applicationScope.launch {
+                    val pod = app.awaitPods(DEFAULT_WAIT_MILLIS).firstOrNull()
+                    when (value) {
+                        "start" -> CalibrationDriver.start(app, pod, app.settingsRepository.settings.first(), out)
+                        "show" -> CalibrationDriver.show(app, pod, out)
+                        "export" -> CalibrationDriver.export(app, pod, out)
+                        "clear" -> CalibrationDriver.clear(app, pod, out)
+                        else -> CalibrationDriver.fixture(app, pod, out)
+                    }
+                }
+            }
+
+            else -> {
+                reply("cal: unknown value '$value'. Known: ${CAL_ACTIONS.joinToString()}. See docs/adb.md")
+            }
         }
     }
 
@@ -669,6 +750,25 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                         current.copy(heartRateHealthConnectEnabled = on)
                     }
 
+                    // Both ship provisional (research R-6): 900 came from a session captured
+                    // through a decoder bug that has since been fixed. Settable for the same
+                    // reason hrConfidenceThreshold is — deriving better ones has to be
+                    // something a person with earbuds can run, not something that needs a
+                    // build. They take effect on the next 'cal start'.
+                    "calibrationToleranceUnits" -> {
+                        current.copy(
+                            calibrationToleranceUnits =
+                                value.toIntOrNull() ?: current.calibrationToleranceUnits,
+                        )
+                    }
+
+                    "calibrationHoldMillis" -> {
+                        current.copy(
+                            calibrationHoldMillis =
+                                value.toLongOrNull() ?: current.calibrationHoldMillis,
+                        )
+                    }
+
                     "scanMode" -> {
                         current.copy(
                             scanMode =
@@ -834,6 +934,31 @@ class GreenPodsDebugReceiver : BroadcastReceiver() {
                 "hrHealthConnect",
                 "liveActivityEnabled",
                 "liveActivityShowHeartRate",
+                "calibrationToleranceUnits",
+                "calibrationHoldMillis",
+            )
+
+        /**
+         * Every action `cal` takes, listed for the refusal that names them.
+         *
+         * Same reason `KNOWN_SETTING_KEYS` is listed: an unknown value that silently did
+         * nothing would be indistinguishable from one that worked.
+         */
+        val CAL_ACTIONS =
+            listOf(
+                "start",
+                "status",
+                "advance",
+                "skip",
+                "repeat",
+                "feed",
+                "confirm",
+                "finish",
+                "abandon",
+                "show",
+                "export",
+                "clear",
+                "fixture",
             )
 
         /** The window `health count` looks back over when none is given. */

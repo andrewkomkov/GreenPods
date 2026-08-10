@@ -535,11 +535,178 @@ consecutive int16 at offsets 26/28/30/32 do hold a near-constant norm (0.9695, s
 move yaw, so that is not the head's orientation either.
 
 Everything the app shows in degrees, and every gesture threshold, therefore still rests on
-a number known to be wrong. `specs/004-head-tracking-calibration` is the way out and is
-still unbuilt.
+a number known to be wrong. `specs/004-head-tracking-calibration` is the way out. It is now
+**built** — the wizard derives a scale per axis from labelled poses, or refuses and says why —
+but nothing it has produced so far came off a head. See the two sections below for what that
+does and does not settle.
 
 Deriving offsets 43/45/47 was listed as an open question; it is now closed as *the
 question was malformed* — they were packet offsets for a report whose position moves.
+
+### What bytes 28 and 30 hold is an open question, and this file is where it was found
+
+The repository contradicts itself, and neither description is pinned by a test:
+
+- `AapDecoder.kt:456-457` reads `horizontalAcceleration = le16(28)` and
+  `verticalAcceleration = le16(30)`.
+- The paragraph above describes offsets 26/28/30/32 as four consecutive int16 holding a
+  near-constant norm — a quaternion that was tested and rejected as *orientation*, but whose
+  norm was never explained away.
+
+Both cannot be right about the same four bytes. Checked against the one real capture in the
+repository (`head-tracking-varint-boundary.txt`, frame seq 126): `le16(26)=3`, `le16(28)=12`,
+`le16(30)=11`, `le16(32)=-31973`, a norm of ≈0.976 against 32768 — consistent with the 0.9695
+above, from a single frame, which is one frame short of evidence either way.
+
+The calibration wizard's `cal export` carries **all five decoded fields** per pose for exactly
+this reason: a labelled run is the cheapest evidence anyone will get about whether 28 and 30
+move with the head's rotation or with the wearer's body. Until such a run exists, the decoder's
+names for those two fields are a guess with a variable name attached, and nothing should be
+built on them.
+
+### What the calibration wizard has and has not measured
+
+**2026-08-08, no hardware.** The wizard was walked end to end from `adb` on an Android 17
+emulator (API 37, `google_apis_ps16k`, arm64) with synthetic poses injected through
+`cal feed`. Every outcome the design calls for was reproduced: a clean run yields
+`MEASURED 0.01431 °/unit field=O1 delta=6290` for yaw; a neutral of 1000 units gives
+`delta=5290` rather than 6290, so the scale is a difference and not an absolute (FR-010); a
+pose moving `O3` where the app expects `O2` yields `MISMATCHED` and stores no pitch scale;
+comparable responders yield `INCONCLUSIVE contenders=O1,O2`; a hold that never settles yields
+`NOT_HELD` with what moved and by how much; a delta of 1000 units yields `SUSPECT` and `finish`
+refuses until `confirm`; and a stored calibration is keyed by model, so an AirPods Pro 3 in
+range reads `UNCALIBRATED` while the AirPods Pro 2 record sits stored and idle.
+
+**None of that is a measurement of an accessory.** Every sample was injected. It establishes
+that the instrument works and that its refusals are reachable — nothing about what a raw
+orientation unit is worth in degrees, and nothing about whether the cross-coupling above
+reproduces.
+
+### The accessory sends gravity, at report offsets 44/46/48 — 2026-08-09
+
+**This is the finding that changes the feature.** The motion report carries a gravity
+direction vector, and it has been sitting there undecoded the whole time.
+
+The devmotion input report is **58 bytes**: a report id, an 8-byte nanosecond counter, and
+then the payload. Five int16 of it were decoded — `o1..o3` at 20/22/24 and two fields called
+accelerations at 28/30 — and the rest was never looked at. Searching every int16 window in the
+report for a stable norm over 1268 captured reports found one:
+
+| offsets | norm | spread | components that move |
+|---|---|---|---|
+| **44, 46, 48** | **1034** (≈1024 = 2¹⁰) | **0.37 %** | all three |
+
+A three-vector of constant magnitude whose components each swing by 400–500 units is a
+direction, and the norm of 1024 per unit says it is scaled in powers of two rather than to the
+int16 range.
+
+**What it is a direction of, proved by a movement it ignores.** Over a recorded sequence — sit
+still, turn the head 90° right and hold, return, chin down and hold, return, ear to the left
+shoulder and hold, return — the vector behaves like this:
+
+| segment | x (44) | y (46) | z (48) | norm | change from rest |
+|---|---:|---:|---:|---:|---|
+| at rest | −629 | 657 | 495 | 1036 | — |
+| **90° yaw turn** | −638 | 657 | 484 | 1036 | **(−9, 0, −11)** |
+| chin down | −290 | 845 | 506 | 1027 | (+339, +188, +11) |
+| ear to shoulder | −447 | 364 | 860 | 1035 | (+183, −293, +364) |
+
+During the yaw turn the vector does not move — nine units on one axis and eleven on another,
+against a per-axis swing of several hundred for the tilts. Meanwhile `o2` and `o3` moved by
++12467 and −7744 in that same window. So one set of fields sees the turn and this one is blind
+to it, which is the defining property of gravity: rotation **about** the gravity axis cannot
+change the direction of gravity.
+
+The consequences are large, and most of them are good.
+
+- **Pitch and roll are already available as real angles, with no calibration at all.** The
+  angle between the current gravity vector and the one recorded with the head upright is the
+  tilt, by trigonometry, and the unknown scale cancels in the ratio. Over the sequence above it
+  read 21° and 29° for the two tilts.
+- **Yaw is not recoverable from this vector, ever.** Not a decoding gap — a geometric fact. Yaw
+  needs `o1..o3` or a gyroscope, and it is the one axis a calibration wizard is still required
+  for.
+- **It explains the 195° pitch.** The app reads `o2` for pitch, and `o2` is dominated by yaw.
+- **It explains why the pose run reported `pitch = MISMATCHED expected=O2 field=O3` and
+  `roll = MISMATCHED expected=O3 field=O2`.** The whole `O1→YAW, O2→PITCH, O3→ROLL` assignment
+  is wrong, and `o1` in particular moved less than the plateau tolerance for every pose.
+
+**What is still unknown.** The bud sits at an angle in the ear, so no single component of the
+vector is pitch or roll on its own — the rest reading (−629, 657, 495)/1036 encodes that
+mounting rotation. Total tilt from upright needs nothing; splitting it into pitch and roll
+needs the mounting rotation, which is a two-parameter fit from a single held pose rather than
+the three-pose scale hunt this feature was built around. And what `o1..o3` are remains open:
+they are not Euler angles, and their norm is not constant (3.4 % spread), so the earlier
+quaternion hypothesis does not hold for them either.
+
+**The quaternion at 26/28/30/32 is disproved.** Its norm looked constant at 0.9695 because
+offset 32 is very nearly a constant — it varies by 136 units across the whole capture while its
+neighbours vary by ~500 and are ~100× smaller in magnitude. A large constant plus small noise
+has a stable norm trivially. That was a real trap and it swallowed an earlier session.
+
+The capture is `core/bluetooth/src/test/resources/aap/devmotion-report-bodies.txt`, labelled by
+segment.
+
+### What a still head actually does — measured 2026-08-09
+
+**Pixel 8 (shiba), Android 17, AirPods Pro 3, both buds in, AAP channel open.** The first
+labelled orientation capture this repository has held. A wearer sitting still and looking
+straight ahead, one two-second hold, 41 samples at **≈21 Hz**:
+
+| field | min | max | span | median |
+|---|---:|---:|---:|---:|
+| `o1` | −25562 | −24832 | 730 | −24942 |
+| `o2` | −15054 | −13483 | 1571 | −14871 |
+| `o3` | 11756 | 13427 | 1671 | 11852 |
+
+**The values are nowhere near zero and they drift continuously.** A "neutral" head reads about
+(−24900, −14900, 11850), not (0, 0, 0) — which is what FR-010 anticipated by deriving every
+scale as a difference against the neutral hold rather than from an absolute.
+
+**The spans above are not drift, and reading them as drift cost an hour.** They come from a
+window that includes the wearer arriving at the pose; `PlateauDetector.refusal` reports the
+widest span over every collected sample, not over the steadiest stretch inside it. Measured
+properly — the widest span of any field across each full hold of the run that completed — a
+settled head moves **87 units for yaw, 127 for pitch, 247 for roll**. The plateau tolerance of
+900 was never the problem, and a default raised to 2500 on the strength of the first reading
+has been put back. The real defect is the next section.
+
+### The countdown and the plateau were the same number, so no pose could pass
+
+Found in the same session, and it is a design defect rather than a constant needing tuning.
+`CalibrationPose.holdMillis` and `PlateauDetector.minimumHoldMillis` were both 2000 ms, so the
+plateau had to span the **entire** collected window. It never can: samples arrive about every
+48 ms, so the first lands after the countdown starts and the window is always a little short.
+
+A yaw pose held perfectly still was refused for being *held for only 1993ms, less than the
+2000ms required*. Seven milliseconds.
+
+`CalibrationSession.analyse` states the opposite intent in its own comment — "the plateau is
+found *inside* the collected window rather than assumed to be all of it — the wearer is not
+obliged to obey the countdown exactly" — and the wiring defeated it. The countdown now carries
+a one-second settle margin over the plateau it must contain.
+
+**Injected samples could never have found this.** `cal feed` spreads its samples exactly across
+the hold, so the synthetic window always spanned the whole countdown. It is the one failure
+mode the no-hardware path is structurally blind to, which is worth remembering the next time a
+green adb walk is mistaken for a verified feature.
+
+**Still unmeasured**, and the reason this section is short:
+
+- The response matrix off a real head. Whether each pose moves one field or three is the
+  question the wizard was built to answer. The 2026-08-09 session reached the neutral hold and
+  then spent itself on the two defects above; no yaw, pitch or roll pose was ever completed, so
+  the cross-coupling claim is still exactly as unpinned as it was. What that session bought was
+  a wizard that can now take the measurement, which it demonstrably could not before.
+- Whether `HeadPoseMapper.UNCALIBRATED_SCALE` (0.0054933317 °/unit) is anywhere near right.
+- Whether bytes 28 and 30 track rotation or translation — see above.
+- Whether the gesture thresholds still fire once a calibration is stored (FR-024). They are
+  expressed in degrees, so calibration changes what they mean physically. That is intended, and
+  it is also the change most likely to be experienced as "head gestures stopped working".
+
+Until a run off hardware is recorded here, `specs/004-head-tracking-calibration` tasks T060 to
+T062 stay open, and no number this feature has produced should be quoted as a property of any
+accessory.
 
 ## Settings that persist in the accessory
 

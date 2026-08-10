@@ -39,6 +39,13 @@ class NoReadingLeavesTheDeviceTest {
      * `BluetoothSocket` is deliberately absent: a channel to the earbuds in the user's
      * ears is not a network boundary, and treating it as one would make this test assert
      * that the feature does not work.
+     *
+     * Each token is written so it can only appear in **code**, because this test reads whole
+     * files including their prose. `retrofit` was originally listed bare and matched the word
+     * "retrofitting" in an unrelated KDoc, which failed the build and pointed an
+     * architectural alarm at a file containing no network call at all. A guard that cries
+     * wolf at ordinary English gets narrowed by whoever hits it next, and the narrowing is
+     * what would eventually let a real client through — so the package name is the token.
      */
     private val networkApis =
         listOf(
@@ -48,7 +55,7 @@ class NoReadingLeavesTheDeviceTest {
             "HttpURLConnection",
             "URLConnection",
             "openConnection",
-            "retrofit",
+            "retrofit2",
             "io.ktor",
         )
 

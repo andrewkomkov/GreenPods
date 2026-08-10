@@ -11,6 +11,7 @@ import io.github.andrewkomkov.greenpods.core.data.diagnostics.DiagnosticsLog
 import io.github.andrewkomkov.greenpods.core.data.transport.HidServiceMemory
 import io.github.andrewkomkov.greenpods.core.model.HeadGestureEvent
 import io.github.andrewkomkov.greenpods.core.model.HeadPose
+import io.github.andrewkomkov.greenpods.core.model.HeadTrackingSample
 import io.github.andrewkomkov.greenpods.core.model.PodFeature
 import io.github.andrewkomkov.greenpods.core.model.PodState
 import kotlinx.coroutines.CoroutineScope
@@ -52,11 +53,29 @@ class HeadTrackingController(
      */
     private val scope: CoroutineScope,
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * Where a measured scale comes from, when there is one.
+     *
+     * Nullable so that everything which merely wants a pose stream — tests, and any caller
+     * predating calibration — keeps working on the labelled approximation instead of being
+     * forced to supply a store it has no opinion about.
+     */
+    private val calibrations: HeadCalibrationStore? = null,
 ) {
-    /** One update: where the head is, and whether that sample completed a gesture. */
+    /**
+     * One update: where the head is, whether that sample completed a gesture, and the raw
+     * values it was all derived from.
+     *
+     * [raw] is carried because calibration derives the mapping from units to degrees and so
+     * cannot consume values that have already been through it. One stream, two consumers:
+     * the alternative — a second collector on the event flow — would mean two sensor
+     * sessions running in the earbuds for one screen, which is the exact outcome this
+     * controller's start-on-collect lifetime exists to prevent.
+     */
     data class Sample(
         val pose: HeadPose,
         val gesture: HeadGestureEvent?,
+        val raw: HeadTrackingSample,
     )
 
     /** Why no stream could be started. Each is a different sentence on screen. */
@@ -151,14 +170,19 @@ class HeadTrackingController(
             // gesture fire from motion the user never made in this sitting.
             val detector = HeadGestureDetector()
 
+            // Resolved once, at the start of the session, rather than per sample: what an
+            // angle means must not change underneath a run — least of all underneath the
+            // calibration wizard, which is itself a consumer of this stream.
+            val mapper = HeadPoseMapper(calibrations?.load(pod.model))
+
             val reader =
                 launch {
                     repository.aapEvents
                         .filter { it.address == pod.address }
                         .mapNotNull { (it.event as? AapEvent.HeadTracking)?.sample }
                         .collect { sample ->
-                            val pose = HeadPoseMapper.toPose(sample)
-                            trySend(Sample(pose, detector.onPose(pose, clock())))
+                            val pose = mapper.toPose(sample)
+                            trySend(Sample(pose, detector.onPose(pose, clock()), sample))
                         }
                 }
 

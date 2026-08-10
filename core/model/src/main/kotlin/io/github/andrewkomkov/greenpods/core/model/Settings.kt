@@ -82,6 +82,32 @@ data class GreenPodsSettings(
      * accessory's optical sensor run without being told it is running.
      */
     val liveActivityShowHeartRate: Boolean = true,
+    /**
+     * How far the raw orientation values may wander and still count as a held pose.
+     *
+     * **Provisional, and a setting for the same reason [heartRateConfidenceThreshold] is.**
+     * 900 comes from this feature's own requirements checklist, which recorded that plateaus
+     * in the motivating session were found at that tolerance — and that session was captured
+     * through a decoder bug that has since been fixed. It is a starting point, not a
+     * measurement, and the only way to replace it with one is to run the wizard against a
+     * real head at several values. That has to stay a measurement rather than a rebuild:
+     * `gp --es cmd set --es key calibrationToleranceUnits --es value 1200`.
+     *
+     * It is not only the plateau's threshold. `CalibrationSolver` takes the same number as its
+     * minimum response, because a response smaller than the amount a *stationary* head is
+     * allowed to wander is not a response — so raising it makes both the hold stricter to
+     * fail and the response harder to claim, together, which is the coupling that makes it
+     * one number rather than two.
+     */
+    val calibrationToleranceUnits: Int = DEFAULT_CALIBRATION_TOLERANCE_UNITS,
+    /**
+     * How long a pose must stay inside the tolerance before it counts as held.
+     *
+     * Provisional on the same evidence, and adjustable for the same reason. Below a second
+     * there is not enough of a plateau to take a median from; above about ten the wizard is
+     * asking for a pose nobody holds still.
+     */
+    val calibrationHoldMillis: Long = DEFAULT_CALIBRATION_HOLD_MILLIS,
 ) {
     /** Clamps anything a corrupted preference file could contain into a usable range. */
     fun sanitised(): GreenPodsSettings =
@@ -90,6 +116,10 @@ data class GreenPodsSettings(
             gestureBindings = gestureBindings.ifEmpty { HeadGestureBinding.Defaults },
             heartRateIntervalMillis = heartRateIntervalMillis.coerceIn(MIN_HR_INTERVAL_MILLIS, MAX_HR_INTERVAL_MILLIS),
             heartRateConfidenceThreshold = heartRateConfidenceThreshold.coerceIn(0, MAX_HR_CONFIDENCE),
+            calibrationToleranceUnits =
+                calibrationToleranceUnits.coerceIn(MIN_CALIBRATION_TOLERANCE_UNITS, MAX_CALIBRATION_TOLERANCE_UNITS),
+            calibrationHoldMillis =
+                calibrationHoldMillis.coerceIn(MIN_CALIBRATION_HOLD_MILLIS, MAX_CALIBRATION_HOLD_MILLIS),
         )
 
     companion object {
@@ -110,6 +140,49 @@ data class GreenPodsSettings(
         const val MAX_HR_CONFIDENCE = 255
 
         const val DEFAULT_HR_CONFIDENCE_THRESHOLD = 128
+
+        /**
+         * How far a settled head wanders. **Measured 2026-08-09, and it is 900 after all.**
+         *
+         * This value was raised to 2500 earlier the same day and the reasoning was wrong, so
+         * the reasoning is written down here rather than quietly dropped. Poses were being
+         * refused with "moved 1571 units over the whole hold", which read as the tolerance
+         * sitting below the drift of a stationary head. It was not: `PlateauDetector.refusal`
+         * reports the widest span over **every** collected sample, including the second or two
+         * in which the wearer is still arriving at the pose. The number described settling, not
+         * drift, and 2500 was fitted to a measurement of the wrong thing.
+         *
+         * What a settled head actually does, from the run that finally completed — the widest
+         * span of any orientation field over each full three-second hold:
+         *
+         * | pose | widest span |
+         * |------|-------------|
+         * | yaw | 87 |
+         * | pitch | 127 |
+         * | roll | 247 |
+         *
+         * So 900 carries roughly four times the room the worst pose needed, and the real defect
+         * was elsewhere: the countdown and the required plateau were the same number, so the
+         * plateau had to span the whole window and the settling could never be excluded from it.
+         * See `CalibrationSession.SETTLE_MARGIN_MILLIS`.
+         *
+         * 900 remains what it always was — a starting point from this feature's requirements
+         * checklist, not a law — and it stays a setting.
+         */
+        const val DEFAULT_CALIBRATION_TOLERANCE_UNITS = 900
+
+        /**
+         * Rails, not policy. Below 50 units nothing a real sensor produces would ever settle;
+         * above a sixth of the int16 range the tolerance would swallow the pose itself.
+         */
+        const val MIN_CALIBRATION_TOLERANCE_UNITS = 50
+        const val MAX_CALIBRATION_TOLERANCE_UNITS = 5_000
+
+        /** See [calibrationHoldMillis] — provisional, and the countdown the wizard shows. */
+        const val DEFAULT_CALIBRATION_HOLD_MILLIS = 2_000L
+
+        const val MIN_CALIBRATION_HOLD_MILLIS = 500L
+        const val MAX_CALIBRATION_HOLD_MILLIS = 10_000L
 
         val Default = GreenPodsSettings()
     }

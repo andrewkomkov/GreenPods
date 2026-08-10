@@ -4,7 +4,8 @@
 
 **Created**: 2026-08-05
 
-**Status**: Amended 2026-08-06 — see "Why This Exists"
+**Status**: Amended 2026-08-09 — the measurement was taken, and it narrows this feature to one
+axis. See "What the measurement found"
 
 **Input**: User description: "Мастер калибровки head tracking. Экран в приложении, который ведёт пользователя через размеченные позы головы («смотри прямо», «подбородок к плечу», «ухо к плечу»), удерживает отсчёт, ловит плато в потоке ориентации и выводит масштаб отдельно для каждой оси — вместо одной общей константы HeadPoseMapper.SCALE. Обоснование из живой съёмки на AirPods Pro 3 (Pixel 8, Android 17, 2876 сэмплов за 143 с): поля прошли очень разные диапазоны — o1 6296 единиц, o2 35585, o3 12175, что при текущей общей SCALE даёт 195° наклона головой, физически невозможных. Значит либо оси назначены не тем полям, либо у осей разный масштаб. Мастер должен также проверять назначение осей, а не только выводить числа, и честно сообщать, когда данных не хватает для вывода (неудержанная поза, отсутствие плато)."
 
@@ -57,6 +58,48 @@ That is what this feature is for: **to produce the first labelled head-tracking 
 and to report what each pose actually moved. A per-axis scale is emitted only where the poses
 genuinely separate the raw fields. On present evidence they will not, and the wizard will say
 so — which is a result, not a failure, and is the outcome this spec now expects.
+
+### What the measurement found — 2026-08-09
+
+The wizard was run against AirPods Pro 3 on a Pixel 8 with the channel open, and it did the
+job this section asked of it. Two things came out, and the second one narrows this feature to
+a single axis. Both are recorded in full in `docs/protocol-research.md`; the capture is
+`core/bluetooth/src/test/resources/aap/head-tracking-poses.txt`.
+
+**The response matrix, at last.** Deltas from the neutral hold:
+
+| pose | `o1` | `o2` | `o3` |
+|---|---:|---:|---:|
+| yaw, 90° right | 668 | **+14398** | −8673 |
+| pitch, chin down | −719 | −711 | **+4301** |
+| roll, ear to shoulder | −1171 | **−8076** | +3623 |
+
+The verdicts were `INCONCLUSIVE`, `MISMATCHED` and `MISMATCHED` — **not `CROSS_COUPLED`**.
+Two of the three poses produced a dominant field, so the fields *do* separate and a per-axis
+scale is not the unfittable model this section expected. What is wrong is the assignment:
+pitch responds in `o3`, roll in `o2`, and `o1` — the field mapped to yaw — moved less than the
+plateau tolerance for every pose.
+
+**The accessory was already sending gravity, and nobody had looked.** The devmotion report is
+58 bytes; five int16 of it were decoded and the rest never examined. A search for a stable
+norm found a three-vector at offsets **44/46/48**, norm 1034 (≈2¹⁰), spread 0.37 %. Over a
+labelled sequence it did not move during the 90° turn — nine units on one axis, while `o2` and
+`o3` moved by twelve and seven thousand — and moved by 21° and 29° for the two tilts. Only
+gravity behaves that way: rotation *about* the gravity axis cannot change gravity's direction.
+
+**So this feature is now needed for yaw, and for nothing else.**
+
+- **Pitch and roll need no calibration at all.** They are the angle between the current gravity
+  vector and the one recorded upright — trigonometry, with the unknown scale cancelling in the
+  ratio. That work belongs to `specs/006-gravity-orientation`, not here.
+- **Yaw cannot be obtained from gravity at any price.** That is geometry, not a decoding gap,
+  and it is what keeps this feature alive.
+- **It explains the 195°.** The app reads `o2` for pitch, and `o2` is dominated by yaw.
+
+The paragraph above about offsets 26/28/30/32 is now **disproved rather than merely rejected**:
+that norm looked constant because offset 32 is nearly constant and about a hundred times larger
+than its neighbours, so a large constant plus small noise had a stable norm trivially. Recorded
+because it is a trap that cost this project two sessions.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -165,8 +208,10 @@ axis.
 - **FR-010**: The wizard MUST measure, for every pose, the response of **every** raw field as the difference between that pose's held values and the neutral reference pose's held values, never from absolute values. The full response set — not only the largest — MUST be recorded and exportable.
 - **FR-010a**: The wizard MUST derive a scale for an axis **only where one field's response to that axis's pose dominates the others** by a stated margin. Where no field dominates, or where the same fields respond to every pose, the wizard MUST report the axes as cross-coupled and MUST NOT store a scale. *On the evidence in `docs/protocol-research.md` this is the expected outcome on AirPods Pro 3, not an error path.*
 - **FR-011**: Where a scale is derived, it MUST be derived and stored per axis independently. It MUST NOT apply one axis's result to another.
+- **FR-011b**: The wizard MUST NOT derive or store a scale for pitch or roll once gravity-derived orientation is available for them (`specs/006-gravity-orientation`). Measured 2026-08-09: gravity gives those two axes as real angles with no pose held and no reference angle assumed, so a scale fitted from "chin toward the shoulder is about 45°" would be a worse number competing with a better one. Yaw is unaffected — gravity cannot see it.
 - **FR-011a**: Where an accessory's HID report descriptor declares a physical range and unit for an orientation field, that declaration MUST take precedence over any stored calibration. The accessory describing itself outranks a measurement inferred from a person holding a pose.
 - **FR-012**: The wizard MUST report, for each pose, which raw field responded most strongly to that pose.
+- **FR-013a**: The currently mapped assignment `O1→YAW, O2→PITCH, O3→ROLL` is **known wrong** as of 2026-08-09: pitch responds in `o3`, roll in `o2`, and `o1` responds to nothing measurable. It is left in place as the thing FR-013 compares against rather than silently corrected, because correcting it from one session's poses would replace a wrong assignment with an unverified one — and for pitch and roll the question is moot once gravity supplies them.
 - **FR-013**: When the responding field for a pose is not the field currently mapped to that axis, the wizard MUST report the mismatch and MUST NOT store a scale for that axis as though the mapping were confirmed.
 - **FR-014**: When two or more fields respond comparably to one pose, the wizard MUST report that pose as inconclusive.
 
@@ -213,9 +258,10 @@ axis.
 - **SC-001**: A person can complete the full wizard in under three minutes, including reading the instructions.
 - **SC-002**: *Conditional on the axes separating.* Where the wizard derives scales, a deliberate quarter-turn of the head is afterwards reported within 15° of a right angle, where the uncalibrated app is wrong by more than double that.
 - **SC-003**: *Conditional on the axes separating.* Where scales are stored, no axis reports an angle beyond what a human neck can reach.
+- **SC-003b**: *Settled 2026-08-09, and not as expected.* The axes **did** separate: two of three poses produced a dominant field and the run reported `INCONCLUSIVE, MISMATCHED, MISMATCHED` rather than `CROSS_COUPLED`. The labelled capture exists. What the run also produced — a gravity vector nobody had decoded — is worth more than the scale it was looking for, which is the argument for building instruments rather than guessing constants.
 - **SC-003a**: Where the axes do **not** separate, the wizard says so, names the fields that responded to each pose, stores no scale, and leaves the labelled capture behind. This is a success, not a failure: it converts a claim currently resting on one unreproducible session into an artefact anyone can re-run, and it is the outcome present evidence predicts.
 - **SC-004**: When a pose is deliberately not held, the wizard reports that pose as unusable in 100% of attempts and emits no number for it.
-- **SC-005**: Every outcome the wizard can reach is reproducible from adb with injected samples alone, with no earbuds present.
+- **SC-005**: Every outcome the wizard can reach is reproducible from adb with injected samples alone, with no earbuds present. Verified 2026-08-08 on an Android 17 emulator. "No earbuds present" means none in range, not none ever paired: an injected sighting that resolves to no bond is discarded as a stranger's before it reaches the wizard, so a phone that has never paired an Apple or Beats accessory cannot run this. That filter is `BondedPodResolver` and it is deliberate — it exists because a stranger's AirPods once took the bonded key — so the constraint is recorded here rather than worked around.
 - **SC-006**: A person who reads only the final screen can tell which axes were measured, which were not, and why — without opening diagnostics.
 - **SC-007**: Re-running calibration and abandoning it midway leaves the previously stored result unchanged in 100% of attempts.
 

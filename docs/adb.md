@@ -40,7 +40,8 @@ adb logcat -c && gp --es cmd dump && sleep 3 && adb logcat -d -s GreenPodsDebug
 
 Prints one JSON document: every accessory with battery, wear state, RSSI, the status
 **and reason** of all three transports, which features are usable and which are locked
-with why, plus all settings and the diagnostics log.
+with why, plus all settings, the stored head calibration per model, and the diagnostics
+log.
 
 Dumps longer than logcat's per-message limit are emitted as `[1/3] …` chunks; the
 document is the chunks concatenated in order. `scripts/readdump.py` does that:
@@ -294,7 +295,7 @@ gp --es cmd set --es key lowBatteryThreshold --es value 30
 Keys: `autoPause`, `autoResume`, `pauseOnlyWhenBothOut`, `backgroundMonitoring`,
 `lowBatteryWarning`, `lowBatteryThreshold`, `headGestures`, `scanMode`,
 `hrIntervalMs`, `hrConfidenceThreshold`, `hrHealthConnect`, `liveActivityEnabled`,
-`liveActivityShowHeartRate`.
+`liveActivityShowHeartRate`, `calibrationToleranceUnits`, `calibrationHoldMillis`.
 
 ## Heart rate
 
@@ -355,6 +356,308 @@ commands.
 **No command prints a heart rate.** Not `hr status`, not `dump`, not a diagnostic
 detail. `dump` carries a `heartRate` object holding the state and the counters — the
 old `heartRateBpm` field is gone.
+
+## Head tracking calibration
+
+The wizard that measures what a raw orientation unit is worth in degrees — or says why it
+could not. Every action is one of the session's own, so this is the same wizard the screen
+runs, driven from a terminal instead of a neck.
+
+```bash
+gp --es cmd cal --es value start      # begin a run against the connected accessory
+gp --es cmd cal --es value status     # state, the pose being held, the verdicts so far
+gp --es cmd cal --es value advance    # begin the hold for the pose now being shown
+gp --es cmd cal --es value skip       # skip this pose; its axis stores nothing and says why
+gp --es cmd cal --es value repeat     # re-run this pose without restarting the run
+gp --es cmd cal --es value confirm    # keep a suspect result, so finish may store it
+gp --es cmd cal --es value finish     # store the run
+gp --es cmd cal --es value abandon    # end the run and store nothing
+gp --es cmd cal --es value show       # what is stored, per model and per axis
+gp --es cmd cal --es value export     # the stored calibration, machine-readable
+gp --es cmd cal --es value clear      # discard the connected model's calibration
+gp --es cmd cal --es value fixture    # emit the run's samples as a labelled fixture
+```
+
+`start` needs an accessory, real or injected — the calibration is keyed by **model**, and
+there is nothing to key it to otherwise:
+
+```bash
+gp --es cmd inject --es model 0x1420 --ei left 70 --ei right 70
+gp --es cmd cal --es value start
+```
+
+`start` prints the two numbers the run will be judged against, because both are provisional
+(research R-6) and a result quoted without them cannot be compared with the next one:
+
+```
+cal: tolerance=900 units hold=2000ms — both provisional, both settable: 'set --es key calibrationToleranceUnits'
+```
+
+`900` came from a session captured through a decoder bug that has since been fixed, so it is a
+starting point rather than a measurement. Replacing it is a measurement someone with earbuds
+can run, and it must not need a build:
+
+```bash
+gp --es cmd set --es key calibrationToleranceUnits --es value 1500
+gp --es cmd set --es key calibrationHoldMillis --es value 3000
+gp --es cmd cal --es value start      # the new values take effect on the next run
+```
+
+The tolerance is one number in three places on purpose: how far a pose may wander and still
+count as held, how small a response may be and still count as a response — a move smaller than
+a *still* head's wander is not a move — and, with the hold, the countdown the wearer is asked
+to keep. Raising it loosens all three together. Both are clamped (50–5 000 units,
+500–10 000 ms) and both appear in `dump` under `settings`.
+
+**`inject` needs this phone to be paired to an Apple or Beats audio accessory**, even though
+nothing has to be in range. An advertisement that resolves to no bond is somebody else's and
+is discarded on the way in — that filter is `BondedPodResolver`, it exists because a
+stranger's AirPods once took the bonded key, and injection walks the same path deliberately.
+On a phone that has never paired one, `inject` still reports `accepted=true` and the sighting
+is dropped a step later; `dump` then shows `"pods":[]` with an `Ignoring a nearby …` entry in
+`diagnostics`, and every `cal` action that names an accessory refuses. Nothing about the
+wizard is broken in that case, and there is no adb path around it.
+
+```
+cal: started — model=AIRPODS_PRO_2 address=DE:B0:60:00:00:01 poses=4 (neutral first, then one per axis)
+cal: nothing is stored until 'cal finish'; 'cal abandon' leaves any stored calibration untouched
+cal: cannot stream — UNAVAILABLE :: this phone cannot carry the commands, or the accessory never described itself
+cal: the run is still driveable with 'cal feed'. Injected samples exercise the wizard; they measure nothing about this accessory
+```
+
+Two separate facts again, and the second is the interesting one: the **session** starts
+regardless, and the **stream** is the part that can be refused. The refusal is drawn from
+`HeadTrackingController.Refusal`, so it is the same sentence the entry point on the head
+gestures screen shows — adb and the screen cannot disagree about why.
+
+An action that does not apply to the current state says so rather than doing nothing:
+
+```
+cal: advance ignored — state=IDLE. Start a run first: 'cal start'.
+```
+
+That follows the precedent `set` established, where a silently-ignored command turned out to
+be indistinguishable from success.
+
+### Feeding poses with no earbuds and no head
+
+```bash
+gp --es cmd cal --es value feed --es samples '"60@0,0,0;60@6290,0,0"'
+```
+
+**Quote the spec twice.** `adb shell` hands the whole command to a shell *on the device*, and
+that shell splits at `;` — so `--es samples "a;b"` delivers only `a`, and the rest is run as a
+separate command that fails silently. The extra quotes are what survive the trip. This is not
+cosmetic: the single-quoted form above feeds four poses, the double-quoted form feeds one and
+leaves the run sitting on pose two looking like the wizard stalled.
+
+The spec is `count@o1,o2,o3[,horizontal,vertical][~jitter]`, semicolon-separated. Each
+segment fills one pose's hold, advancing to the next pose as each hold completes, and the
+samples are spread evenly across the hold — so `60@…` is a full hold with sixty samples in
+it, and `8@…` is a hold too short to measure anything.
+
+A segment that produces no held plateau **does not advance the pose** — the wizard stays on it
+so it can be repeated or skipped (FR-015). A following segment therefore lands on the *same*
+pose, not the next one, and a run driven by one long spec silently shifts. Feed the failing
+pose on its own, read `cal status`, then `cal skip` or `cal repeat`.
+
+`~n` adds a **deterministic** alternating jitter of ±n on the three orientation fields, not a
+random one, so a not-held run reproduces rather than merely happening.
+
+A run reaches `REVIEWING`, where the verdicts live, only once **all four** poses are past —
+so each example below feeds the whole run, not just the pose it is about.
+
+```bash
+# a clean run: neutral, then one pose per axis
+gp --es cmd cal --es value start
+gp --es cmd cal --es value feed --es samples '"60@0,0,0;60@6290,0,0;60@0,10920,0;60@0,0,10920"'
+gp --es cmd cal --es value status
+
+# noise wider than the tolerance -> NOT_HELD, and no number. The failed pose stays
+# current, so it is skipped before the rest of the run is fed.
+gp --es cmd cal --es value feed --es samples '"60@0,0,0;60@6290,0,0~4000"'
+gp --es cmd cal --es value skip
+gp --es cmd cal --es value feed --es samples '"60@0,10920,0;60@0,0,10920"'
+
+# two fields responding comparably -> INCONCLUSIVE, never the larger of the two
+gp --es cmd cal --es value feed --es samples '"60@0,0,0;60@5900,6290,0;60@0,10920,0;60@0,0,10920"'
+
+# a pose that moves O3 where the app expects O2 -> MISMATCHED, and no pitch scale
+gp --es cmd cal --es value feed --es samples '"60@0,0,0;60@6290,0,0;60@0,0,10920;60@0,0,10920"'
+```
+
+**`feed` addresses the session directly.** That is the one place in this project where the
+wizard runs without a live stream, and it is deliberate: `HeadTrackingController.stream()`
+refuses before a single sample arrives when the transport is gated, so injecting through it
+would make the calibration path unverifiable on exactly the phones where verification matters
+most. Injected samples are still published onto `PodRepository.onAapEvent` — the entry point
+real frames arrive on — so they walk the rest of the pipeline too; that republishing is
+suppressed while a live stream is running, so one sample cannot be counted twice.
+
+Nothing an injected run produces is a measurement of an accessory. It measures the machinery.
+This command exists in the **debug build only**.
+
+### Reading a run
+
+Mid-run, `status` reports the state and the pose, and every axis reads `pending`: verdicts do
+not exist until the run is solved, and printing a placeholder for one is the single thing this
+feature must never do.
+
+```
+cal: state=HOLDING pose=YAW remaining=1800ms samples=44
+cal: yaw    = pending
+cal: pitch  = pending
+cal: roll   = pending
+```
+
+A pose that was attempted and never settled leaves the run **awaiting that same pose**, with
+what went wrong attached:
+
+```
+cal: state=AWAITING pose=YAW index=1 hold=2000ms — the last attempt was never settled: O1 moved
+     8000 units over the whole hold, past the 900 allowed. 'cal repeat' tries it again, 'cal
+     skip' leaves the axis uncalibrated and says why
+```
+
+Once every pose is past, the verdicts print:
+
+```
+cal: state=REVIEWING — nothing is stored until 'cal finish'
+cal: yaw    = NOT_HELD "never settled: O1 moved 8000 units over the whole hold, past the 900 allowed"
+cal: pitch  = MEASURED 0.00412 deg/unit field=O2 delta=10920 units from PITCH
+cal: roll   = MEASURED 0.00412 deg/unit field=O3 delta=10920 units from ROLL
+```
+
+Skipping past a pose that *failed* still reports `NOT_HELD`, not `SKIPPED`. The two are
+different findings — "you chose not to do this" against "you did it and here is what went
+wrong" — and skipping is the only way out of a failed pose that does not retry it.
+
+`field=` appears on every verdict that identified one, **including `MISMATCHED`** — which
+field actually moved is the evidence this feature exists to produce, and it is the most
+interesting thing it prints.
+
+`INCONCLUSIVE` covers two findings and says which: named contenders mean several readings
+moved comparably, while no contenders at all means nothing moved past the plateau tolerance
+and the pose measured nothing.
+
+A verdict is always present; a number is not. `SKIPPED`, `NOT_HELD`, `INCONCLUSIVE`,
+`MISMATCHED` and `CROSS_COUPLED` carry no scale at all, and on current hardware
+`CROSS_COUPLED` for all three axes is the **expected** result of a real run rather than an
+error — see `docs/protocol-research.md`.
+
+### Storing, and refusing to
+
+```bash
+gp --es cmd cal --es value finish
+```
+
+```
+cal: finish refused — 1 suspect result(s) not confirmed. Nothing stored
+cal: yaw    = SUSPECT 0.09000 deg/unit field=O1 delta=1000 units confirmed=false "90° from 1000
+     units implies 0.0900°/unit, outside the plausible 0.0015..0.0500"
+cal: 'cal confirm' keeps it anyway; 'cal start' re-runs from the beginning
+```
+
+The arithmetic is in the refusal on purpose. "This looks wrong" without the numbers is an
+opinion; with them it is something the reader can check. `confirm` takes an optional
+`--es axis YAW`; without one it confirms every suspect result waiting on a decision.
+
+**The band that produces a suspect result is narrow, and it is narrow for a reason.** A delta
+under 900 units is rejected as noise before any scale is derived, and the plausible range tops
+out at `0.05°/unit`, so for the 90° yaw pose only a delta of roughly 900–1800 units lands
+between them. Smaller deltas are `INCONCLUSIVE` with no contenders, not `SUSPECT` — an earlier
+draft of this page suggested 40 units, which produces the former and stores without asking.
+
+Only `finish` writes. Abandoning, losing the stream or walking away leaves a previously
+stored calibration byte-identical, so a failed re-run can never destroy a good one.
+
+### What is stored
+
+```bash
+gp --es cmd cal --es value show
+```
+
+```
+cal: AIRPODS_PRO_2 (connected) measuredAt=2026-08-06T14:22:31Z
+cal:   yaw    = MEASURED 0.01431 deg/unit field=O1 delta=6290 units from YAW applied=true
+cal:   pitch  = MISMATCHED expected=O2 field=O3 delta=10920 units — no scale stored for this axis applied=false
+cal:   roll   = UNCALIBRATED applied=false
+```
+
+`applied=true` only ever appears for the connected model: a calibration is keyed by model, so
+another model in the list is stored and idle. An axis with no calibration is **present** and
+reads `UNCALIBRATED`, here and in `dump` — "never measured" and "the dump forgot it" have to
+stay distinguishable.
+
+The same set is in the state dump under `headCalibration`:
+
+```bash
+python3 scripts/readdump.py | python3 -c "import sys,json; \
+  print(json.dumps(json.load(sys.stdin)['headCalibration'], indent=1))"
+```
+
+`clear` puts one model back to the fallback:
+
+```bash
+gp --es cmd cal --es value clear
+gp --es cmd cal --es value show    # every axis UNCALIBRATED, angles from the labelled approximation
+```
+
+### Exporting a result
+
+```bash
+gp --es cmd cal --es value export
+```
+
+One JSON object, in the form `docs/protocol-research.md` takes:
+
+```json
+{"model":"AIRPODS_PRO_3","measuredAt":"2026-08-06T14:22:31Z","app":"0.5.2",
+ "axes":{"yaw":{"verdict":"MEASURED","field":"O1","degreesPerUnit":0.01431,"deltaUnits":6290,
+                "referenceDegrees":90.0,"applied":true,"holdMillis":2000,"spanUnits":210,"samples":61},
+         "pitch":{"verdict":"MISMATCHED","expectedField":"O2","respondingField":"O3","deltaUnits":10920,
+                  "referenceDegrees":45.0,"applied":false},
+         "roll":{"verdict":"NOT_HELD","reason":"never settled: O3 moved 3140 units …",
+                 "referenceDegrees":45.0,"applied":false}},
+ "poses":[{"pose":"NEUTRAL","index":0,"samples":60,"holdMillis":2000,"source":"injected",
+           "medians":{"o1":0.0,"o2":0.0,"o3":0.0,"horizontalAcceleration":0.0,"verticalAcceleration":0.0},
+           "spans":{"o1":0,"o2":0,"o3":0,"horizontalAcceleration":0,"verticalAcceleration":0}}]}
+```
+
+Three things about it are contractual:
+
+- **A verdict is always present; a scale is not.** No consumer may assume `degreesPerUnit`
+  exists — a record that quietly omitted the failed axes would read as a three-axis
+  calibration.
+- **The evidence travels with the number.** `deltaUnits`, `referenceDegrees`, `spanUnits`,
+  `holdMillis` and `samples` are what let a later reader judge the measurement, or re-derive
+  it under a different assumed reference angle.
+- **`referenceDegrees` is nominal** — the angle the wearer was asked for, never the one their
+  neck reached. Say so wherever the export is quoted.
+
+`poses` carries **all five decoded fields**, not the three the axes use. The accelerations are
+the only thing in the frame that could distinguish a head rotation from the wearer moving, and
+the repository currently contradicts itself about what bytes 28 and 30 are — the decoder calls
+them accelerations, the research notes describe them as part of a four-int16 near-unit-norm
+vector. A run of this wizard is the cheapest evidence either way. `poses` is empty when no run
+has happened in this process; the axes then come from storage alone, and the command says so.
+
+### Emitting a fixture
+
+```bash
+adb logcat -c && gp --es cmd cal --es value fixture && sleep 3
+adb logcat -d -s GreenPodsDebug | sed -n 's/^.*cal-fixture: //p' \
+  > core/bluetooth/src/test/resources/aap/head-tracking-poses.txt
+```
+
+Writes the run's samples out as a labelled sample series in the style of
+`hr-report-series.txt`, one row per sample, with a provenance header naming the model, the
+host phone, the date, the HID service and the rate. A run fed with `cal feed` is labelled
+**SYNTHETIC** in that header and must never be used to pin a decoder; a run off a live stream
+is labelled **CAPTURED**.
+
+Do not edit an emitted fixture to make a test pass. A decoder that disagrees with a capture is
+wrong, or the capture has to be re-taken from a device and its source recorded.
 
 ## Monitoring service
 

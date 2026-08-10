@@ -9,9 +9,11 @@ import io.github.andrewkomkov.greenpods.core.data.head.HeadTrackingController
 import io.github.andrewkomkov.greenpods.core.model.LiveActivityAvailability
 import io.github.andrewkomkov.greenpods.feature.controls.ControlsViewModel
 import io.github.andrewkomkov.greenpods.feature.pods.PodsViewModel
+import io.github.andrewkomkov.greenpods.feature.settings.HeadCalibrationViewModel
 import io.github.andrewkomkov.greenpods.feature.settings.HeadGestureViewModel
 import io.github.andrewkomkov.greenpods.feature.settings.LiveActivityUiState
 import io.github.andrewkomkov.greenpods.feature.settings.SettingsViewModel
+import kotlinx.coroutines.flow.map
 
 /**
  * View-model factories that pull from the manual container.
@@ -57,6 +59,40 @@ object GreenPodsViewModels {
                             diagnostics = app.diagnostics,
                             scope = app.applicationScope,
                         ),
+                )
+            }
+        }
+
+    /**
+     * The calibration wizard.
+     *
+     * Its own [HeadTrackingController], not the trainer's: the controller is a cold flow whose
+     * collection starts and stops the sensor in the earbuds, so sharing one instance between
+     * two screens would tie one screen's sensor to the other's lifetime.
+     *
+     * The store is passed to the controller as well as to the view model. The wizard measures
+     * from `Sample.raw` and so is unaffected by it — but the pose the controller derives
+     * alongside is what every other consumer reads, and a controller built without the store
+     * would quietly report uncalibrated angles for the rest of the session.
+     */
+    fun headCalibration(): ViewModelProvider.Factory =
+        viewModelFactory {
+            initializer {
+                val app = GreenPodsApplication.instance
+                val controller =
+                    HeadTrackingController(
+                        repository = app.podRepository,
+                        gateway = app.controlGateway,
+                        serviceMemory = app.hidServiceMemory,
+                        diagnostics = app.diagnostics,
+                        scope = app.applicationScope,
+                        calibrations = app.headCalibrationStore,
+                    )
+                HeadCalibrationViewModel(
+                    samples = { controller.stream() },
+                    models = app.podRepository.primaryPod.map { it?.model },
+                    calibrations = app.headCalibrationStore,
+                    settings = app.settingsRepository.settings,
                 )
             }
         }
